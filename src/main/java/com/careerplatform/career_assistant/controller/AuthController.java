@@ -1,7 +1,9 @@
 package com.careerplatform.career_assistant.controller;
 
+import com.careerplatform.career_assistant.dto.request.LoginRequest;
 import com.careerplatform.career_assistant.dto.request.RegisterRequest;
 import com.careerplatform.career_assistant.dto.request.RegisterStep2Request;
+import com.careerplatform.career_assistant.dto.response.LoginResponse;
 import com.careerplatform.career_assistant.dto.response.RegisterResponse;
 import com.careerplatform.career_assistant.dto.response.RegisterStep2Response;
 import com.careerplatform.career_assistant.entity.User;
@@ -63,5 +65,13 @@ public class AuthController {
                         user.getIsProfileComplete()
                 )
         );
+    }
+
+    // POST /api/auth/login
+    // Public endpoint — validates credentials and returns JWT token
+    @PostMapping("/login")
+    public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
+        log.info("Login request received for email: {}", request.getEmail());
+        return ResponseEntity.ok(authService.login(request));
     }
 }

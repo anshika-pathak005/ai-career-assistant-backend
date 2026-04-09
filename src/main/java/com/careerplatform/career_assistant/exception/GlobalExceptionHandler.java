@@ -52,6 +52,14 @@ public class GlobalExceptionHandler {
                 .body(new ErrorResponse(405, ex.getMethod() + " method is not supported for this endpoint", LocalDateTime.now()));
     }
 
+    // 401 — wrong email or password
+    @ExceptionHandler(InvalidCredentialsException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidCredentials(InvalidCredentialsException ex) {
+        log.error("Authentication failed: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(new ErrorResponse(401, ex.getMessage(), LocalDateTime.now()));
+    }
+
     // 500 — unexpected error, log real cause server side, send generic message to frontend
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleAllExceptions(Exception ex) {

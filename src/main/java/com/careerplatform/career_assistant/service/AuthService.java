@@ -1,11 +1,15 @@
 package com.careerplatform.career_assistant.service;
 
+import com.careerplatform.career_assistant.dto.request.LoginRequest;
 import com.careerplatform.career_assistant.dto.request.RegisterRequest;
 import com.careerplatform.career_assistant.dto.request.RegisterStep2Request;
+import com.careerplatform.career_assistant.dto.response.LoginResponse;
 import com.careerplatform.career_assistant.entity.User;
 import com.careerplatform.career_assistant.exception.DuplicateResourceException;
+import com.careerplatform.career_assistant.exception.InvalidCredentialsException;
 import com.careerplatform.career_assistant.exception.ResourceNotFoundException;
 import com.careerplatform.career_assistant.repository.UserRepository;
+import com.careerplatform.career_assistant.util.JwtUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -15,6 +19,8 @@ import org.springframework.stereotype.Service;
 @Service
 @RequiredArgsConstructor
 public class AuthService {
+
+    private final JwtUtil jwtUtil;
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
@@ -66,5 +72,34 @@ public class AuthService {
         log.info("Step 2 completed for userId: {}, profile marked complete", userId);
 
         return updatedUser;
+    }
+
+    // Login — validates credentials, returns JWT token
+    public LoginResponse login(LoginRequest request) {
+
+        log.info("Login attempt for email: {}", request.getEmail());
+
+        // find user by email — throw 401 if not found
+        User user = userRepository.findByEmail(request.getEmail())
+                .orElseThrow(() -> new InvalidCredentialsException("Invalid email or password"));
+
+        // compare raw password with stored BCrypt hash
+        if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
+            log.warn("Wrong password attempt for email: {}", request.getEmail());
+            throw new InvalidCredentialsException("Invalid email or password");
+        }
+
+        // generate JWT token with userId and email embedded
+        String token = jwtUtil.generateToken(user.getId(), user.getEmail());
+        log.info("Login successful for userId: {}", user.getId());
+
+        return new LoginResponse(
+                token,
+                user.getId(),
+                user.getEmail(),
+                user.getName(),
+                user.getWizardStep(),
+                user.getIsProfileComplete()
+        );
     }
 }
