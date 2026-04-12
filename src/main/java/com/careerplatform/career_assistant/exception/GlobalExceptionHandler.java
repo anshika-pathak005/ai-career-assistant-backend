@@ -60,6 +60,14 @@ public class GlobalExceptionHandler {
                 .body(new ErrorResponse(401, ex.getMessage(), LocalDateTime.now()));
     }
 
+    // 401 — refresh token revoked or expired
+    @ExceptionHandler(TokenRevokedException.class)
+    public ResponseEntity<ErrorResponse> handleTokenRevoked(TokenRevokedException ex) {
+        log.error("Token revoked or expired: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                .body(new ErrorResponse(401, ex.getMessage(), LocalDateTime.now()));
+    }
+
     // 500 — unexpected error, log real cause server side, send generic message to frontend
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleAllExceptions(Exception ex) {

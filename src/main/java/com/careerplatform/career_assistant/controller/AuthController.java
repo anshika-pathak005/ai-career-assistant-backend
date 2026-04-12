@@ -3,11 +3,17 @@ package com.careerplatform.career_assistant.controller;
 import com.careerplatform.career_assistant.dto.request.LoginRequest;
 import com.careerplatform.career_assistant.dto.request.RegisterRequest;
 import com.careerplatform.career_assistant.dto.request.RegisterStep2Request;
+import com.careerplatform.career_assistant.dto.response.AuthResult;
 import com.careerplatform.career_assistant.dto.response.LoginResponse;
 import com.careerplatform.career_assistant.dto.response.RegisterResponse;
 import com.careerplatform.career_assistant.dto.response.RegisterStep2Response;
 import com.careerplatform.career_assistant.entity.User;
+import com.careerplatform.career_assistant.exception.TokenRevokedException;
 import com.careerplatform.career_assistant.service.AuthService;
+import com.careerplatform.career_assistant.util.CookieUtil;
+import com.careerplatform.career_assistant.util.JwtUtil;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +28,8 @@ import org.springframework.web.bind.annotation.*;
 public class AuthController {
 
     private final AuthService authService;
+    private final CookieUtil cookieUtil;
+    private final JwtUtil jwtUtil;
 
     // POST /api/auth/register/step1
     // Public endpoint — no auth required
@@ -68,10 +76,58 @@ public class AuthController {
     }
 
     // POST /api/auth/login
-    // Public endpoint — validates credentials and returns JWT token
+    // accessToken → response body
+    // refreshToken → httpOnly cookie (browser stores, JS cannot access)
     @PostMapping("/login")
-    public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
-        log.info("Login request received for email: {}", request.getEmail());
-        return ResponseEntity.ok(authService.login(request));
+    public ResponseEntity<LoginResponse> login(
+            @Valid @RequestBody LoginRequest request,
+            @RequestHeader(value = "User-Agent", defaultValue = "unknown") String deviceInfo,
+            HttpServletResponse response) {
+
+        log.info("Login request for email: {}", request.getEmail());
+        AuthResult result = authService.login(request, deviceInfo);
+
+        // set refreshToken as httpOnly cookie
+        cookieUtil.setRefreshTokenCookie(response, result.getRawRefreshToken());
+
+        // send accessToken + user info in body
+        return ResponseEntity.ok(result.getLoginResponse());
+    }
+
+    // POST /api/auth/refresh
+    // browser automatically sends refreshToken cookie — no body needed from frontend
+    @PostMapping("/refresh")
+    public ResponseEntity<LoginResponse> refresh(
+            HttpServletRequest request,
+            HttpServletResponse response,
+            @RequestHeader(value = "User-Agent", defaultValue = "unknown") String deviceInfo) {
+
+        // extract refreshToken from cookie — browser sent it automatically
+        String rawRefreshToken = cookieUtil.getRefreshTokenFromCookie(request)
+                .orElseThrow(() -> new TokenRevokedException("No refresh token found. Please login again."));
+
+        AuthResult result = authService.refresh(rawRefreshToken, deviceInfo);
+
+        // set new rotated refreshToken as cookie — old one deleted from DB
+        cookieUtil.setRefreshTokenCookie(response, result.getRawRefreshToken());
+
+        return ResponseEntity.ok(result.getLoginResponse());
+    }
+
+    // POST /api/auth/logout
+    // deletes refresh tokens from DB + clears cookie from browser
+    @PostMapping("/logout")
+    public ResponseEntity<Void> logout(
+            @RequestHeader("Authorization") String authHeader,
+            HttpServletResponse response) {
+
+        // extract userId from accessToken
+        Long userId = jwtUtil.extractUserId(authHeader.substring(7));
+        authService.logout(userId);
+
+        // clear cookie from browser
+        cookieUtil.clearRefreshTokenCookie(response);
+
+        return ResponseEntity.noContent().build(); // 204
     }
 }

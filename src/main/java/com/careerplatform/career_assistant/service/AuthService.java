@@ -3,6 +3,7 @@ package com.careerplatform.career_assistant.service;
 import com.careerplatform.career_assistant.dto.request.LoginRequest;
 import com.careerplatform.career_assistant.dto.request.RegisterRequest;
 import com.careerplatform.career_assistant.dto.request.RegisterStep2Request;
+import com.careerplatform.career_assistant.dto.response.AuthResult;
 import com.careerplatform.career_assistant.dto.response.LoginResponse;
 import com.careerplatform.career_assistant.entity.User;
 import com.careerplatform.career_assistant.exception.DuplicateResourceException;
@@ -21,9 +22,10 @@ import org.springframework.stereotype.Service;
 public class AuthService {
 
     private final JwtUtil jwtUtil;
-
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final RefreshTokenService refreshTokenService;
+
 
     // Step 1 registration — saves basic user info, hashes password, sets wizardStep = 1
     public User registerStep1(RegisterRequest request) {
@@ -74,9 +76,10 @@ public class AuthService {
         return updatedUser;
     }
 
-    // Login — validates credentials, returns JWT token
-    public LoginResponse login(LoginRequest request) {
-
+    // Login — validates credentials, returns JWT access and refresh token
+    // Login — returns AuthResult instead of LoginResponse
+    // reason: controller needs refreshToken separately to set as cookie
+    public AuthResult login(LoginRequest request, String deviceInfo) {
         log.info("Login attempt for email: {}", request.getEmail());
 
         // find user by email — throw 401 if not found
@@ -89,17 +92,49 @@ public class AuthService {
             throw new InvalidCredentialsException("Invalid email or password");
         }
 
-        // generate JWT token with userId and email embedded
-        String token = jwtUtil.generateToken(user.getId(), user.getEmail());
+        // generate both tokens
+        String accessToken = jwtUtil.generateToken(user.getId(), user.getEmail());
+        String refreshToken = refreshTokenService.generateRefreshToken(user, deviceInfo);
         log.info("Login successful for userId: {}", user.getId());
 
-        return new LoginResponse(
-                token,
-                user.getId(),
-                user.getEmail(),
-                user.getName(),
-                user.getWizardStep(),
-                user.getIsProfileComplete()
+        // accessToken goes in body, refreshToken goes in cookie — controller handles that
+        return new AuthResult(
+                new LoginResponse(accessToken, user.getId(), user.getEmail(),
+                        user.getName(), user.getWizardStep(), user.getIsProfileComplete()),
+                refreshToken
         );
+    }
+
+    // Refresh — reads rawRefreshToken from cookie (controller extracts and passes it)
+    // rotates refresh token + generates new access token
+    public AuthResult refresh(String rawRefreshToken, String deviceInfo) {
+        log.info("Refresh token request received");
+
+        Long userId = refreshTokenService.getUserIdFromToken(rawRefreshToken);
+
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+        // rotate — delete old refresh token, generate new one
+        String newRefreshToken = refreshTokenService.rotateRefreshToken(rawRefreshToken, deviceInfo);
+        String newAccessToken = jwtUtil.generateToken(user.getId(), user.getEmail());
+        log.info("Tokens refreshed for userId: {}", userId);
+
+        return new AuthResult(
+                new LoginResponse(newAccessToken, user.getId(), user.getEmail(),
+                        user.getName(), user.getWizardStep(), user.getIsProfileComplete()),
+                newRefreshToken
+        );
+    }
+
+    // Logout — deletes all refresh tokens from DB + controller clears cookie
+    public void logout(Long userId) {
+        log.info("Logout request for userId: {}", userId);
+
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+        refreshTokenService.deleteAllTokens(user);
+        log.info("Logout successful for userId: {}", userId);
     }
 }
