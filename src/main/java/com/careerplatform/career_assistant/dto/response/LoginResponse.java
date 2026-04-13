@@ -7,9 +7,16 @@ import lombok.Data;
 @AllArgsConstructor
 public class LoginResponse {
     private String accessToken;
-    private Long userId;
-    private String email;
-    private String name;
-    private Integer wizardStep;
-    private Boolean isProfileComplete;
+    private UserInfo user;
+
+    // inner class — represents user info in response
+    @Data
+    @AllArgsConstructor
+    public static class UserInfo {
+        private Long id;
+        private String email;
+        private String name;
+        private Integer wizardStep;
+        private Boolean isProfileComplete;
+    }
 }

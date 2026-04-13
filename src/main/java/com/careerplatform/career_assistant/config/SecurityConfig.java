@@ -49,7 +49,8 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/api/auth/register/step1",
                                 "/api/auth/register/step2/**",
-                                "/api/auth/login"
+                                "/api/auth/login",
+                                "/api/auth/refresh"
                         ).permitAll()
                         // everything else requires valid JWT
                         .anyRequest().authenticated()

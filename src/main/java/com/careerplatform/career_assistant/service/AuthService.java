@@ -99,8 +99,16 @@ public class AuthService {
 
         // accessToken goes in body, refreshToken goes in cookie — controller handles that
         return new AuthResult(
-                new LoginResponse(accessToken, user.getId(), user.getEmail(),
-                        user.getName(), user.getWizardStep(), user.getIsProfileComplete()),
+                new LoginResponse(
+                        accessToken,
+                        new LoginResponse.UserInfo(
+                                user.getId(),
+                                user.getEmail(),
+                                user.getName(),
+                                user.getWizardStep(),
+                                user.getIsProfileComplete()
+                        )
+                ),
                 refreshToken
         );
     }
@@ -121,8 +129,16 @@ public class AuthService {
         log.info("Tokens refreshed for userId: {}", userId);
 
         return new AuthResult(
-                new LoginResponse(newAccessToken, user.getId(), user.getEmail(),
-                        user.getName(), user.getWizardStep(), user.getIsProfileComplete()),
+                new LoginResponse(
+                        newAccessToken,
+                        new LoginResponse.UserInfo(
+                                user.getId(),
+                                user.getEmail(),
+                                user.getName(),
+                                user.getWizardStep(),
+                                user.getIsProfileComplete()
+                        )
+                ),
                 newRefreshToken
         );
     }
