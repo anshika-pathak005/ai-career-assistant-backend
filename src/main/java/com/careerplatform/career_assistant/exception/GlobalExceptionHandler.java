@@ -68,6 +68,22 @@ public class GlobalExceptionHandler {
                 .body(new ErrorResponse(401, ex.getMessage(), LocalDateTime.now()));
     }
 
+    // 400 — file upload validation failed
+    @ExceptionHandler(FileUploadException.class)
+    public ResponseEntity<ErrorResponse> handleFileUpload(FileUploadException ex) {
+        log.error("File upload error: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(new ErrorResponse(400, ex.getMessage(), LocalDateTime.now()));
+    }
+
+    // 502 — Gemini API call failed
+    @ExceptionHandler(GeminiApiException.class)
+    public ResponseEntity<ErrorResponse> handleGeminiApi(GeminiApiException ex) {
+        log.error("Gemini API error: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(new ErrorResponse(502, "AI analysis failed. Please try again.", LocalDateTime.now()));
+    }
+
     // 500 — unexpected error, log real cause server side, send generic message to frontend
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleAllExceptions(Exception ex) {
