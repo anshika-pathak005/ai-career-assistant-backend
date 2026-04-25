@@ -9,6 +9,7 @@ import com.careerplatform.career_assistant.exception.ResourceNotFoundException;
 import com.careerplatform.career_assistant.repository.AnalysisResultRepository;
 import com.careerplatform.career_assistant.repository.ResumeRepository;
 import com.careerplatform.career_assistant.repository.UserRepository;
+import com.careerplatform.career_assistant.util.ResumeTextFormatter;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -28,30 +29,31 @@ public class ResumeProcessingService {
 
     private final FileStorageService fileStorageService;
     private final TextExtractionService textExtractionService;
-    private final GeminiService geminiService;
+    private final DeepSeekService deepSeekService;
     private final ResumeRepository resumeRepository;
     private final AnalysisResultRepository analysisResultRepository;
     private final UserRepository userRepository;
+    private final ResumeTextFormatter resumeTextFormatter;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
-     * Complete resume processing pipeline:
-     * save file → extract text → call Gemini → parse response → save to DB → return response
+     * Complete pipeline:
+     * save file → extract text → format text → call AI with user profile
+     * → parse response → save to DB → return response
      */
     @Transactional
     public ResumeUploadResponse uploadAndAnalyze(MultipartFile file) {
 
-        // get current logged in user from SecurityContext — set by JwtAuthenticationFilter
         Long userId = getCurrentUserId();
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
         log.info("Starting resume processing for userId: {}", userId);
 
-        // step 1 — save file to disk
+        // step 1 — save file
         String filePath = fileStorageService.saveFile(file);
 
-        // step 2 — save resume record to DB
+        // step 2 — save resume to DB
         Resume resume = Resume.builder()
                 .user(user)
                 .fileName(file.getOriginalFilename())
@@ -60,79 +62,64 @@ public class ResumeProcessingService {
                 .fileType(file.getContentType())
                 .build();
         resume = resumeRepository.save(resume);
-        log.info("Resume saved to DB with id: {}", resume.getId());
 
-        // step 3 — extract text from file
-        String extractedText = textExtractionService.extractText(filePath);
-        System.out.println("Extracted text :" + extractedText);
+        // step 3 — extract and format text
+        String rawText = textExtractionService.extractText(filePath);
+        System.out.println("Raw extracted text:\n" + rawText); // debug log to see raw text before formatting
 
-        // step 4 — send to Gemini for analysis
-        String aiResponseJson = geminiService.analyzeResume(extractedText);
-        System.out.println("ai response : " + aiResponseJson);
+        String cleanedText = resumeTextFormatter.format(rawText);
+        System.out.println("Cleaned and formatted text:\n" + cleanedText); // debug log to see cleaned text sent to AI
 
-        // step 5 — parse AI response and save analysis
+        log.info("Text extracted and formatted for resumeId: {}", resume.getId());
+
+        // step 4 — send resume text + user profile to AI
+        String aiResponseJson = deepSeekService.analyzeResume(cleanedText, user);
+        System.out.println("Raw AI response JSON:\n" + aiResponseJson); // debug log to see raw AI response
+
+        // step 5 — parse and save analysis
         AnalysisResult analysis = parseAndSaveAnalysis(resume, aiResponseJson);
-        System.out.println("analylis result : "+ analysis);
+        System.out.println("Parsed analysis result:\n" + analysis); // debug log to see parsed analysis result
 
         log.info("Resume analysis complete for resumeId: {}", resume.getId());
-
-        // step 6 — build and return response
         return buildUploadResponse(resume, analysis);
     }
 
-    // get all resumes for current logged in user
     public List<ResumeListResponse> getMyResumes() {
         Long userId = getCurrentUserId();
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
-        List<Resume> resumes = resumeRepository.findByUserOrderByUploadTimeDesc(user);
-
-        return resumes.stream().map(resume -> {
-            // get analysis scores if they exist
-            return analysisResultRepository.findByResume(resume)
-                    .map(analysis -> new ResumeListResponse(
-                            resume.getId(),
-                            resume.getFileName(),
-                            resume.getFileSize(),
-                            resume.getUploadTime(),
-                            analysis.getOverallScore(),
-                            analysis.getAtsScore(),
-                            analysis.getExperienceLevel()
-                    ))
-                    .orElse(new ResumeListResponse(
-                            resume.getId(),
-                            resume.getFileName(),
-                            resume.getFileSize(),
-                            resume.getUploadTime(),
-                            null, null, null
-                    ));
-        }).toList();
+        return resumeRepository.findByUserOrderByUploadTimeDesc(user).stream()
+                .map(resume -> analysisResultRepository.findByResume(resume)
+                        .map(a -> new ResumeListResponse(
+                                resume.getId(), resume.getFileName(),
+                                resume.getFileSize(), resume.getUploadTime(),
+                                a.getOverallScore(), a.getAtsScore(), a.getExperienceLevel()))
+                        .orElse(new ResumeListResponse(
+                                resume.getId(), resume.getFileName(),
+                                resume.getFileSize(), resume.getUploadTime(),
+                                null, null, null)))
+                .toList();
     }
 
-    // get specific resume with analysis
     public ResumeUploadResponse getResumeById(Long resumeId) {
         Long userId = getCurrentUserId();
-
         Resume resume = resumeRepository.findById(resumeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Resume not found"));
 
-        // make sure user can only access their own resumes
         if (!resume.getUser().getId().equals(userId)) {
             throw new ResourceNotFoundException("Resume not found");
         }
 
         AnalysisResult analysis = analysisResultRepository.findByResume(resume)
-                .orElseThrow(() -> new ResourceNotFoundException("Analysis not found for this resume"));
+                .orElseThrow(() -> new ResourceNotFoundException("Analysis not found"));
 
         return buildUploadResponse(resume, analysis);
     }
 
-    // delete resume + file from disk
     @Transactional
     public void deleteResume(Long resumeId) {
         Long userId = getCurrentUserId();
-
         Resume resume = resumeRepository.findById(resumeId)
                 .orElseThrow(() -> new ResourceNotFoundException("Resume not found"));
 
@@ -140,78 +127,77 @@ public class ResumeProcessingService {
             throw new ResourceNotFoundException("Resume not found");
         }
 
-        // delete file from disk
         fileStorageService.deleteFile(resume.getFilePath());
-
-        // delete from DB — cascades to analysis
         resumeRepository.delete(resume);
         log.info("Resume deleted: {}", resumeId);
     }
 
-    // parses Gemini JSON response and saves AnalysisResult to DB
+    // parses AI JSON response — reads both analysis and careerGuidance sections
     private AnalysisResult parseAndSaveAnalysis(Resume resume, String aiJson) {
         try {
-            JsonNode node = objectMapper.readTree(aiJson);
+            JsonNode root = objectMapper.readTree(aiJson);
+            JsonNode analysis = root.path("analysis");
+            JsonNode guidance = root.path("careerGuidance");
 
-            AnalysisResult analysis = AnalysisResult.builder()
+            AnalysisResult result = AnalysisResult.builder()
                     .resume(resume)
-                    .fullName(getTextOrNull(node, "fullName"))
-                    .email(getTextOrNull(node, "email"))
-                    .phone(getTextOrNull(node, "phone"))
-                    .overallScore(getIntOrNull(node, "overallScore"))
-                    .atsScore(getIntOrNull(node, "atsScore"))
-                    .summary(getTextOrNull(node, "summary"))
-                    .experienceLevel(getTextOrNull(node, "experienceLevel"))
-                    .totalExperienceYears(getDoubleOrNull(node, "experienceYears"))
-                    .currentRole(getTextOrNull(node, "currentRole"))
-                    .technicalSkills(node.path("technicalSkills").toString())
-                    .softSkills(node.path("softSkills").toString())
-                    .missingSkills(node.path("missingSkills").toString())
-                    .missingKeywords(node.path("missingKeywords").toString())
-                    .strengths(node.path("strengths").toString())
-                    .improvements(node.path("improvements").toString())
+                    // analysis fields
+                    .fullName(getTextOrNull(analysis, "fullName"))
+                    .email(getTextOrNull(analysis, "email"))
+                    .phone(getTextOrNull(analysis, "phone"))
+                    .overallScore(getIntOrNull(analysis, "overallScore"))
+                    .atsScore(getIntOrNull(analysis, "atsScore"))
+                    .summary(getTextOrNull(analysis, "summary"))
+                    .experienceLevel(getTextOrNull(analysis, "experienceLevel"))
+                    .totalExperienceYears(getDoubleOrNull(analysis, "experienceYears"))
+                    .currentRole(getTextOrNull(analysis, "currentRole"))
+                    .technicalSkills(analysis.path("technicalSkills").toString())
+                    .softSkills(analysis.path("softSkills").toString())
+                    .strengths(analysis.path("strengths").toString())
+                    .improvements(analysis.path("improvements").toString())
+                    .missingSkills(analysis.path("missingSkills").toString())
+                    .missingKeywords(analysis.path("missingKeywords").toString())
+                    // career guidance fields
+                    .recommendedRoles(guidance.path("recommendedRoles").toString())
+                    .learningRoadmap(guidance.path("learningRoadmap").toString())
+                    .projectSuggestions(guidance.path("projectSuggestions").toString())
+                    .careerAdvice(getTextOrNull(guidance, "careerAdvice"))
                     .rawAiResponse(aiJson)
                     .build();
 
-            return analysisResultRepository.save(analysis);
+            return analysisResultRepository.save(result);
 
         } catch (Exception ex) {
             log.error("Failed to parse AI response: {}", ex.getMessage());
-            throw new RuntimeException("Failed to parse AI analysis response");
+            throw new RuntimeException("Failed to save analysis results");
         }
     }
 
-    // builds the final API response from resume + analysis entities
-    private ResumeUploadResponse buildUploadResponse(Resume resume, AnalysisResult analysis) {
-        try {
-            return new ResumeUploadResponse(
-                    resume.getId(),
-                    resume.getFileName(),
-                    "Resume uploaded and analyzed successfully",
-                    new ResumeUploadResponse.AnalysisDto(
-                            analysis.getFullName(),
-                            analysis.getEmail(),
-                            analysis.getPhone(),
-                            analysis.getOverallScore(),
-                            analysis.getAtsScore(),
-                            analysis.getSummary(),
-                            analysis.getExperienceLevel(),
-                            analysis.getTotalExperienceYears(),
-                            analysis.getCurrentRole(),
-                            parseJsonArray(analysis.getStrengths()),
-                            parseJsonArray(analysis.getImprovements()),
-                            parseJsonArray(analysis.getMissingSkills()),
-                            parseJsonArray(analysis.getMissingKeywords()),
-                            parseJsonArray(analysis.getTechnicalSkills())
-                    )
-            );
-        } catch (Exception ex) {
-            log.error("Failed to build response: {}", ex.getMessage());
-            throw new RuntimeException("Failed to build response");
-        }
+    private ResumeUploadResponse buildUploadResponse(Resume resume, AnalysisResult a) {
+        return new ResumeUploadResponse(
+                resume.getId(),
+                resume.getFileName(),
+                "Resume uploaded and analyzed successfully",
+                new ResumeUploadResponse.AnalysisDto(
+                        a.getFullName(), a.getEmail(), a.getPhone(),
+                        a.getOverallScore(), a.getAtsScore(), a.getSummary(),
+                        a.getExperienceLevel(), a.getTotalExperienceYears(), a.getCurrentRole(),
+                        parseJsonArray(a.getTechnicalSkills()),
+                        parseJsonArray(a.getSoftSkills()),
+                        parseJsonArray(a.getStrengths()),
+                        parseJsonArray(a.getImprovements()),
+                        parseJsonArray(a.getMissingSkills()),
+                        parseJsonArray(a.getMissingKeywords())
+                ),
+                new ResumeUploadResponse.CareerGuidanceDto(
+                        parseJsonArray(a.getRecommendedRoles()),
+                        parseJsonArray(a.getLearningRoadmap()),
+                        parseJsonArray(a.getProjectSuggestions()),
+                        a.getCareerAdvice()
+                )
+        );
     }
 
-    // parses JSON array string back to List<String>
     private List<String> parseJsonArray(String jsonArray) {
         if (jsonArray == null) return new ArrayList<>();
         try {
@@ -224,13 +210,9 @@ public class ResumeProcessingService {
         }
     }
 
-    // extracts current userId from Spring SecurityContext
-    // set by JwtAuthenticationFilter on every authenticated request
     private Long getCurrentUserId() {
-        String userId = SecurityContextHolder.getContext()
-                .getAuthentication()
-                .getName(); // returns the username we set — which is userId
-        return Long.parseLong(userId);
+        return Long.parseLong(SecurityContextHolder.getContext()
+                .getAuthentication().getName());
     }
 
     private String getTextOrNull(JsonNode node, String field) {

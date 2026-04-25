@@ -16,26 +16,25 @@ public class AnalysisResult {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // one analysis per resume
     @OneToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "resume_id", nullable = false)
     private Resume resume;
 
-    // contact info extracted by AI
+    // ── contact info ──────────────────────────────
     private String fullName;
     private String email;
     private String phone;
 
-    // scores
-    private Integer overallScore;   // 0-100
-    private Integer atsScore;       // 0-100
+    // ── scores ────────────────────────────────────
+    private Integer overallScore;
+    private Integer atsScore;
 
-    // experience
-    private String experienceLevel;        // Entry/Mid/Senior
+    // ── experience ────────────────────────────────
+    private String experienceLevel;
     private Double totalExperienceYears;
     private String currentRole;
 
-    // JSON columns — List<String> stored as JSON
+    // ── skills (JSON arrays) ──────────────────────
     @Column(columnDefinition = "json")
     private String technicalSkills;
 
@@ -48,7 +47,7 @@ public class AnalysisResult {
     @Column(columnDefinition = "json")
     private String missingKeywords;
 
-    // analysis
+    // ── analysis ──────────────────────────────────
     @Column(columnDefinition = "text")
     private String summary;
 
@@ -58,7 +57,20 @@ public class AnalysisResult {
     @Column(columnDefinition = "json")
     private String improvements;
 
-    // raw AI response — for debugging
+    // ── career guidance (NEW) ─────────────────────
+    @Column(columnDefinition = "json")
+    private String recommendedRoles;
+
+    @Column(columnDefinition = "json")
+    private String learningRoadmap;
+
+    @Column(columnDefinition = "json")
+    private String projectSuggestions;
+
+    @Column(columnDefinition = "text")
+    private String careerAdvice;
+
+    // ── debug ─────────────────────────────────────
     @Column(columnDefinition = "text")
     private String rawAiResponse;
 
