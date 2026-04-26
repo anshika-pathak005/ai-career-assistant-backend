@@ -70,7 +70,10 @@ public class AuthController {
                         user.getUserCategory(),
                         user.getDreamJob(),
                         user.getWizardStep(),
-                        user.getIsProfileComplete()
+                        user.getIsProfileComplete(),
+                        user.getGoalType(),
+                        user.getProjectLevel(),
+                        user.getWorkPreference()
                 )
         );
     }

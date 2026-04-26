@@ -1,5 +1,6 @@
 package com.careerplatform.career_assistant.service;
 
+import com.careerplatform.career_assistant.dto.request.ProfileAnalysisRequest;
 import com.careerplatform.career_assistant.dto.response.ResumeListResponse;
 import com.careerplatform.career_assistant.dto.response.ResumeUploadResponse;
 import com.careerplatform.career_assistant.entity.AnalysisResult;
@@ -29,7 +30,8 @@ public class ResumeProcessingService {
 
     private final FileStorageService fileStorageService;
     private final TextExtractionService textExtractionService;
-    private final DeepSeekService deepSeekService;
+//    private final DeepSeekService deepSeekService;
+    private final GroqService groqService;
     private final ResumeRepository resumeRepository;
     private final AnalysisResultRepository analysisResultRepository;
     private final UserRepository userRepository;
@@ -73,7 +75,8 @@ public class ResumeProcessingService {
         log.info("Text extracted and formatted for resumeId: {}", resume.getId());
 
         // step 4 — send resume text + user profile to AI
-        String aiResponseJson = deepSeekService.analyzeResume(cleanedText, user);
+//        String aiResponseJson = deepSeekService.analyzeResume(cleanedText, user);
+        String aiResponseJson = groqService.analyzeResume(cleanedText, user);
         System.out.println("Raw AI response JSON:\n" + aiResponseJson); // debug log to see raw AI response
 
         // step 5 — parse and save analysis
@@ -142,6 +145,8 @@ public class ResumeProcessingService {
             AnalysisResult result = AnalysisResult.builder()
                     .resume(resume)
                     // analysis fields
+                    .user(resume.getUser())
+                    .analysisSource(AnalysisResult.AnalysisSource.RESUME)
                     .fullName(getTextOrNull(analysis, "fullName"))
                     .email(getTextOrNull(analysis, "email"))
                     .phone(getTextOrNull(analysis, "phone"))
@@ -175,8 +180,8 @@ public class ResumeProcessingService {
 
     private ResumeUploadResponse buildUploadResponse(Resume resume, AnalysisResult a) {
         return new ResumeUploadResponse(
-                resume.getId(),
-                resume.getFileName(),
+                resume != null ? resume.getId() : null,       // null for form-based
+                resume != null ? resume.getFileName() : null, // null for form-based
                 "Resume uploaded and analyzed successfully",
                 new ResumeUploadResponse.AnalysisDto(
                         a.getFullName(), a.getEmail(), a.getPhone(),
@@ -228,5 +233,86 @@ public class ResumeProcessingService {
     private Double getDoubleOrNull(JsonNode node, String field) {
         return node.has(field) && !node.path(field).isNull()
                 ? node.path(field).asDouble() : null;
+    }
+
+    /**
+     * Form-based analysis flow — no resume involved.
+     * 1. Update user profile with any new/changed fields from form
+     * 2. Send profile to AI
+     * 3. Save result to career_analysis table with source = FORM
+     */
+    @Transactional
+    public ResumeUploadResponse analyzeFromProfile(ProfileAnalysisRequest request) {
+
+        Long userId = getCurrentUserId();
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+        log.info("Form-based analysis started for userId: {}", userId);
+
+        // update only the fields that user actually sent — skip nulls
+        if (request.getUserCategory() != null) user.setUserCategory(request.getUserCategory());
+        if (request.getDreamJob() != null) user.setDreamJob(request.getDreamJob());
+        if (request.getIndustries() != null) user.setIndustries(request.getIndustries());
+        if (request.getSkills() != null) user.setSkills(request.getSkills());
+        if (request.getExperienceYears() != null) user.setExperienceYears(request.getExperienceYears());
+        if (request.getCurrentRole() != null) user.setCurrentRole(request.getCurrentRole());
+        if (request.getGoalType() != null) user.setGoalType(request.getGoalType());
+        if (request.getProjectLevel() != null) user.setProjectLevel(request.getProjectLevel());
+        if (request.getWorkPreference() != null) user.setWorkPreference(request.getWorkPreference());
+
+        // save updated profile
+        user = userRepository.save(user);
+        log.info("User profile updated for userId: {}", userId);
+
+        // send to AI — no resume text
+        // String aiResponseJson = deepSeekService.analyzeFromProfile(user);
+        String aiResponseJson = groqService.analyzeFromProfile(user);
+        // save analysis with source = FORM and no resume linked
+        AnalysisResult analysis = parseAndSaveFormAnalysis(user, aiResponseJson);
+
+        log.info("Form-based analysis complete for userId: {}", userId);
+        return buildUploadResponse(null, analysis);
+    }
+
+    // saves analysis with source=FORM — no resume linked
+    private AnalysisResult parseAndSaveFormAnalysis(User user, String aiJson) {
+        try {
+            JsonNode root = objectMapper.readTree(aiJson);
+            JsonNode analysis = root.path("analysis");
+            JsonNode guidance = root.path("careerGuidance");
+
+            AnalysisResult result = AnalysisResult.builder()
+                    .resume(null)                           // no resume for form-based
+                    .user(user)
+                    .analysisSource(AnalysisResult.AnalysisSource.FORM) // mark as FORM
+                    .fullName(getTextOrNull(analysis, "fullName"))
+                    .email(getTextOrNull(analysis, "email"))
+                    .phone(getTextOrNull(analysis, "phone"))
+                    .overallScore(getIntOrNull(analysis, "overallScore"))
+                    .atsScore(getIntOrNull(analysis, "atsScore"))
+                    .summary(getTextOrNull(analysis, "summary"))
+                    .experienceLevel(getTextOrNull(analysis, "experienceLevel"))
+                    .totalExperienceYears(getDoubleOrNull(analysis, "experienceYears"))
+                    .currentRole(getTextOrNull(analysis, "currentRole"))
+                    .technicalSkills(analysis.path("technicalSkills").toString())
+                    .softSkills(analysis.path("softSkills").toString())
+                    .strengths(analysis.path("strengths").toString())
+                    .improvements(analysis.path("improvements").toString())
+                    .missingSkills(analysis.path("missingSkills").toString())
+                    .missingKeywords(analysis.path("missingKeywords").toString())
+                    .recommendedRoles(guidance.path("recommendedRoles").toString())
+                    .learningRoadmap(guidance.path("learningRoadmap").toString())
+                    .projectSuggestions(guidance.path("projectSuggestions").toString())
+                    .careerAdvice(getTextOrNull(guidance, "careerAdvice"))
+                    .rawAiResponse(aiJson)
+                    .build();
+
+            return analysisResultRepository.save(result);
+
+        } catch (Exception ex) {
+            log.error("Failed to parse form analysis response: {}", ex.getMessage());
+            throw new RuntimeException("Failed to save analysis results");
+        }
     }
 }

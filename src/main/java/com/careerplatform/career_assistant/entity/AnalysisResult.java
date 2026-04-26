@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @Entity
-@Table(name = "resume_analysis")
+@Table(name = "career_analysis")
 public class AnalysisResult {
 
     @Id
@@ -17,8 +17,22 @@ public class AnalysisResult {
     private Long id;
 
     @OneToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "resume_id", nullable = false)
+    @JoinColumn(name = "resume_id", nullable = true)
     private Resume resume;
+
+    // who this analysis belongs to — needed for form-based (no resume)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
+
+    // RESUME = uploaded resume, FORM = profile form
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private AnalysisSource analysisSource;
+
+    public enum AnalysisSource {
+        RESUME, FORM
+    }
 
     // ── contact info ──────────────────────────────
     private String fullName;

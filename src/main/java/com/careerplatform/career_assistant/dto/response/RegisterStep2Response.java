@@ -13,4 +13,7 @@ public class RegisterStep2Response {
     private String dreamJob;
     private Integer wizardStep;
     private Boolean isProfileComplete;
+    private String goalType;
+    private String projectLevel;
+    private String workPreference;
 }

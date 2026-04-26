@@ -1,5 +1,6 @@
 package com.careerplatform.career_assistant.controller;
 
+import com.careerplatform.career_assistant.dto.request.ProfileAnalysisRequest;
 import com.careerplatform.career_assistant.dto.response.ResumeListResponse;
 import com.careerplatform.career_assistant.dto.response.ResumeUploadResponse;
 import com.careerplatform.career_assistant.service.ResumeProcessingService;
@@ -27,6 +28,15 @@ public class ResumeController {
             @RequestParam("file") MultipartFile file) {
         log.info("Resume upload request received: {}", file.getOriginalFilename());
         return ResponseEntity.ok(resumeProcessingService.uploadAndAnalyze(file));
+    }
+
+    // POST /api/resume/analyze-from-profile
+    // for users with no resume — updates profile and triggers AI analysis
+    @PostMapping("/analyze-from-profile")
+    public ResponseEntity<ResumeUploadResponse> analyzeFromProfile(
+            @RequestBody ProfileAnalysisRequest request) {
+        log.info("Profile-based analysis request received");
+        return ResponseEntity.ok(resumeProcessingService.analyzeFromProfile(request));
     }
 
     // GET /api/resume/my-resumes

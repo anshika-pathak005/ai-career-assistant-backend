@@ -69,6 +69,9 @@ public class AuthService {
         user.setCurrentRole(request.getCurrentRole());
         user.setWizardStep(2);
         user.setIsProfileComplete(true);
+        user.setGoalType(request.getGoalType());
+        user.setProjectLevel(request.getProjectLevel());
+        user.setWorkPreference(request.getWorkPreference());
 
         User updatedUser = userRepository.save(user);
         log.info("Step 2 completed for userId: {}, profile marked complete", userId);

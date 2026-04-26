@@ -62,6 +62,15 @@ public class User {
     @Builder.Default
     private Boolean isProfileComplete = false;
 
+    @Column(name = "goal_type", length = 50)
+    private String goalType;
+
+    @Column(name = "project_level", length = 50)
+    private String projectLevel;
+
+    @Column(name = "work_preference", length = 50)
+    private String workPreference;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;

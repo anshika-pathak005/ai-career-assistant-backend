@@ -20,4 +20,7 @@ public class RegisterStep2Request {
     private List<String> skills;          // optional — tags input
     private Integer experienceYears;      // optional
     private String currentRole;           // optional
+    private String goalType;
+    private String projectLevel;
+    private String workPreference;
 }
