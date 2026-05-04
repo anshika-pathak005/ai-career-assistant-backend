@@ -2,6 +2,7 @@ package com.careerplatform.career_assistant.service;
 
 import com.careerplatform.career_assistant.entity.User;
 import com.careerplatform.career_assistant.repository.UserRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -17,6 +18,7 @@ import org.springframework.stereotype.Service;
 public class UserDetailsServiceImpl implements UserDetailsService {
 
     private final UserRepository userRepository;
+    private final ObjectMapper objectMapper;
 
     // Spring Security calls this with the userId (we use userId as "username")
     // Returns UserDetails — Spring Security's representation of a user
@@ -38,4 +40,6 @@ public class UserDetailsServiceImpl implements UserDetailsService {
                 .authorities(java.util.Collections.emptyList())
                 .build();
     }
+
+
 }

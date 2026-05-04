@@ -2,6 +2,8 @@ package com.careerplatform.career_assistant.dto.response;
 
 import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
 
 @Data
 @AllArgsConstructor

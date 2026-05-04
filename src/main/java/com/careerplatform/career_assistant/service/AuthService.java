@@ -28,7 +28,7 @@ public class AuthService {
 
 
     // Step 1 registration — saves basic user info, hashes password, sets wizardStep = 1
-    public User registerStep1(RegisterRequest request) {
+    public AuthResult registerStep1(RegisterRequest request, String deviceInfo) {
 
         log.info("Registering new user with email: {}", request.getEmail());
 
@@ -38,6 +38,7 @@ public class AuthService {
             throw new DuplicateResourceException("Email already registered");
         }
 
+        // Create a new User object using Builder pattern (avoids constructor order issues and improves readability)
         User user = User.builder()
                 .name(request.getName())
                 .email(request.getEmail())
@@ -49,7 +50,26 @@ public class AuthService {
         User savedUser = userRepository.save(user);
         log.info("User registered successfully with id: {}", savedUser.getId());
 
-        return savedUser;
+        //generating tokens to send on frontend as user has just registered and we want to log them in immediately
+        String accessToken = jwtUtil.generateToken(savedUser.getId(), savedUser.getEmail());
+        String refreshToken = refreshTokenService.generateRefreshToken(savedUser, deviceInfo);
+
+        log.info("Tokens generated for new user: {}", savedUser.getId());
+
+        // RETURN AuthResult instead of User (same pattern as login)
+        return new AuthResult(
+                new LoginResponse(
+                        accessToken,
+                        new LoginResponse.UserInfo(
+                                savedUser.getId(),
+                                savedUser.getEmail(),
+                                savedUser.getName(),
+                                savedUser.getWizardStep(),
+                                savedUser.getIsProfileComplete()
+                        )
+                ),
+                refreshToken
+        );
     }
 
     // Step 2 registration — updates remaining profile fields, marks profile complete
@@ -69,15 +89,13 @@ public class AuthService {
         user.setCurrentRole(request.getCurrentRole());
         user.setWizardStep(2);
         user.setIsProfileComplete(true);
-        user.setGoalType(request.getGoalType());
-        user.setProjectLevel(request.getProjectLevel());
-        user.setWorkPreference(request.getWorkPreference());
 
         User updatedUser = userRepository.save(user);
         log.info("Step 2 completed for userId: {}, profile marked complete", userId);
 
         return updatedUser;
     }
+
 
     // Login — validates credentials, returns JWT access and refresh token
     // Login — returns AuthResult instead of LoginResponse

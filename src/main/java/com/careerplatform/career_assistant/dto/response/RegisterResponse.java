@@ -13,4 +13,5 @@ public class RegisterResponse {
     private String email;
     private String name;
     private Integer wizardStep;
+    private String accessToken;
 }

@@ -35,20 +35,21 @@ public class AuthController {
     // Public endpoint — no auth required
     // @Valid triggers validation on RegisterRequest fields before hitting service
     @PostMapping("/register/step1")
-    public ResponseEntity<RegisterResponse> registerStep1(@Valid @RequestBody RegisterRequest request) {
+    public ResponseEntity<LoginResponse> registerStep1(
+            @Valid @RequestBody RegisterRequest request,
+            @RequestHeader(value = "User-Agent", defaultValue = "unknown") String deviceInfo,
+            HttpServletResponse response) {
+
         log.info("Step 1 registration request received for email: {}", request.getEmail());
 
-        User user = authService.registerStep1(request);
+        // Register user and generate both access token and refresh token
+        AuthResult result = authService.registerStep1(request, deviceInfo);
 
-        return ResponseEntity.status(HttpStatus.CREATED).body(
-                new RegisterResponse(
-                        "Account created successfully",
-                        user.getId(),
-                        user.getEmail(),
-                        user.getName(),
-                        user.getWizardStep()
-                )
-        );
+        // Set refresh token as HTTP-only cookie for automatic browser storage
+        cookieUtil.setRefreshTokenCookie(response, result.getRawRefreshToken());
+
+        // Return access token in response body for client to use in subsequent requests
+        return ResponseEntity.status(HttpStatus.CREATED).body(result.getLoginResponse());
     }
 
     // PUT /api/auth/register/step2
@@ -56,8 +57,13 @@ public class AuthController {
     // userId passed as query param — JWT will handle this automatically
     @PutMapping("/register/step2")
     public ResponseEntity<RegisterStep2Response> registerStep2(
-            @RequestParam Long userId,
-            @Valid @RequestBody RegisterStep2Request request) {
+            @Valid @RequestBody RegisterStep2Request request,
+            @RequestHeader("Authorization") String authHeader) {
+
+        log.info("Step 2 registration request received");
+
+        String token = authHeader.substring(7);
+        Long userId = jwtUtil.extractUserId(token);
 
         log.info("Step 2 registration request received for userId: {}", userId);
 

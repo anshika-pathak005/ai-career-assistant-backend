@@ -1,5 +1,7 @@
 package com.careerplatform.career_assistant.service;
 
+import com.careerplatform.career_assistant.dto.request.RoadmapGenerationRequest;
+import com.careerplatform.career_assistant.dto.response.SpecializationResponse;
 import com.careerplatform.career_assistant.entity.User;
 import com.careerplatform.career_assistant.exception.GeminiApiException;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -10,6 +12,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
@@ -145,9 +149,13 @@ public class GroqService {
             // validate JSON
             JsonNode parsed = objectMapper.readTree(content);
 
-            // make sure both sections exist
-            if (!parsed.has("analysis") || !parsed.has("careerGuidance")) {
-                log.error("Groq response missing required sections: {}", content);
+// Check what type of response this is
+            boolean isValidResumeResponse = parsed.has("analysis") && parsed.has("careerGuidance");
+            boolean isValidRoadmapResponse = parsed.has("summary") && parsed.has("phases");
+
+            if (!isValidResumeResponse && !isValidRoadmapResponse) {
+                log.error("AI response missing required sections. Has fields: {}",
+                        parsed.fieldNames());
                 throw new GeminiApiException("AI returned incomplete analysis. Please try again.");
             }
 
@@ -443,6 +451,338 @@ public class GroqService {
                 dreamJob, dreamJob, dreamJob, dreamJob,
                 name, email, experienceYears, currentRole
         );
+    }
+
+
+    /**
+     * Generates complete career roadmap for user.
+     * Takes full user profile + roadmap form preferences.
+     * Returns structured JSON with phases, skills, steps.
+     */
+    public String generateRoadmap(User user, RoadmapGenerationRequest request) {
+        log.info("Generating roadmap for userId: {}", user.getId());
+        String requestBody = buildRoadmapRequestBody(user, request);
+        return callApi(requestBody);
+    }
+
+    /**
+     * Builds roadmap generation request body.
+     * Separate from resume analysis — different prompt, different output structure.
+     */
+    private String buildRoadmapRequestBody(User user, RoadmapGenerationRequest request) {
+        String systemPrompt = buildRoadmapSystemPrompt();
+        String userPrompt = buildRoadmapUserPrompt(user, request);
+
+        return """
+            {
+              "model": "%s",
+              "messages": [
+                {"role": "system", "content": "%s"},
+                {"role": "user", "content": "%s"}
+              ],
+              "max_tokens": 4000,
+              "temperature": 0.2,
+              "response_format": {"type": "json_object"}
+            }
+            """.formatted(model, escapeJson(systemPrompt), escapeJson(userPrompt));
+    }
+
+    private String buildRoadmapSystemPrompt() {
+        return """
+            You are an expert career coach and curriculum designer with 15+ years of experience building learning paths for software developers.
+            
+            STRICT RULES — follow every rule exactly or return {}:
+            1. Return ONLY valid JSON — no explanation, no markdown, no text outside JSON
+            2. JSON must have exactly these top-level keys: summary, totalEstimatedWeeks, phases
+            3. Never return null — use "" for strings, 0 for numbers, [] for arrays
+            4. All fields must be present — do not omit any field
+            5. Roadmap must have exactly 3 phases — Foundation, Core Skills, Advanced
+            6. Each phase must have 2 to 5 skills
+            7. Each skill must have exactly 4 to 6 steps
+            8. Every skill, step, and resource must be specific to the dream job
+            9. For existing skills — start from user's current level, not from scratch
+            10. For missing skills — start from BEGINNER
+            11. estimatedDays per skill must be realistic — not too short, not too long
+            12. resources must be real, specific, and free — MDN, freeCodeCamp, official docs etc.
+            13. Steps must follow the user's learning style preference
+            14. Timeline must match user's weekly hours availability
+            15. If you cannot follow this structure exactly, return {}
+            """;
+    }
+
+    private String buildRoadmapUserPrompt(User user, RoadmapGenerationRequest request) {
+
+        String dreamJob       = safe(user.getDreamJob(), "Not specified");
+        String userCategory   = safe(user.getUserCategory(), "Not specified");
+        String currentRole    = safe(user.getCurrentRole(), "Not specified");
+        String industries     = safeList(user.getIndustries(), "Not specified");
+        String experienceLevel = request.getExperienceYears() != null ? request.getExperienceYears() : "FRESHER";
+        String goalType        = request.getGoalType() != null ? request.getGoalType() : "GET_JOB";
+        String projectLevel    = request.getProjectLevel() != null ? request.getProjectLevel() : "BEGINNER";
+        String learningStyle   = request.getLearningStyle() != null ? request.getLearningStyle() : "BALANCED";
+        String weeklyHours     = request.getWeeklyHours() != null ? request.getWeeklyHours().toString() : "5";
+        String specialization = request.getSpecialization() != null
+                ? request.getSpecialization() : "Not specified";
+
+        // build skill levels string — "React.js: INTERMEDIATE, Java: BEGINNER"
+        StringBuilder skillLevelsStr = new StringBuilder();
+        if (request.getSkillLevels() != null) {
+            request.getSkillLevels().forEach((skill, level) ->
+                    skillLevelsStr.append(skill).append(": ").append(level).append("\n  ")
+            );
+        }
+
+        return """
+                Generate a complete personalized career roadmap for this user.
+                            
+                ═══════════════════════════════════════════════
+                USER PROFILE
+                ═══════════════════════════════════════════════
+                Dream Job        : %s         ← roadmap must lead here
+                Specialization   : %s         ← focus roadmap on this specific path
+                User Category    : %s
+                Current Role     : %s
+                Experience Level : %s
+                Target Industries: %s
+                ═══════════════════════════════════════════════
+                ROADMAP PREFERENCES
+                ═══════════════════════════════════════════════
+                Goal Type        : %s
+                Project Level    : %s
+                Learning Style   : %s
+                Weekly Hours     : %s hours/week
+                ═══════════════════════════════════════════════
+                CURRENT SKILLS AND LEVELS
+                ═══════════════════════════════════════════════
+                %s
+                ═══════════════════════════════════════════════
+                            
+                CRITICAL INSTRUCTIONS:
+                - Dream job is "%s" with specialization "%s"
+                - Every skill must be directly relevant to "%s" specialization
+                - If specialization is "MERN Stack" → only include MongoDB, Express, React, Node skills
+                - If specialization is "Java Full Stack" → only include Spring Boot, React, MySQL skills
+                - Do not include skills from other specializations       
+                - For skills listed above: start from their current level, advance to what dream job needs
+                - For skills NOT listed but needed for dream job: add them starting from BEGINNER
+                - Learning style is %s — structure steps accordingly:
+                    PROJECT_FIRST  → start each skill with a mini project, then explain concepts
+                    THEORY_FIRST   → explain concepts fully, then apply with exercises
+                    BALANCED       → alternate between concept and immediate practice
+                    GUIDED         → highly structured, small steps, lots of checkpoints
+                - User has %s hours/week — set realistic timelines based on this
+                - Goal is %s — shape the roadmap accordingly:
+                    GET_JOB        → focus on interview-ready skills, portfolio projects, job keywords
+                    IMPROVE_SKILLS → focus on depth over breadth, advanced concepts
+                    BUILD_PROJECTS → focus on project-based learning, real-world applications
+                    INTERVIEW_PREP → focus on DSA, system design, common interview topics
+                    EXPLORE        → broader coverage, less depth, more variety
+                            
+                Return ONLY this exact JSON structure:
+                            
+                {
+                  "summary": "2-3 sentences describing this personalized roadmap and what user will achieve",
+                  "totalEstimatedWeeks": <realistic integer based on weekly hours and content>,
+                  "phases": [
+                    {
+                      "title": "Phase 1: Foundation",
+                      "description": "what this phase covers and why",
+                      "estimatedWeeks": <integer>,
+                      "skills": [
+                        {
+                          "skillName": "string",
+                          "isExistingSkill": <true if user listed this skill, false if new>,
+                          "startingLevel": "BEGINNER or INTERMEDIATE or ADVANCED or EXPERT",
+                          "targetLevel": "BEGINNER or INTERMEDIATE or ADVANCED or EXPERT",
+                          "estimatedDays": <realistic integer>,
+                          "resources": ["specific free resource 1", "specific free resource 2"],
+                          "steps": [
+                            {
+                              "title": "short step title",
+                              "description": "exactly what to do in this step — specific and actionable",
+                              "estimatedHours": <integer>
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "title": "Phase 2: Core Skills",
+                      ...
+                    },
+                    {
+                      "title": "Phase 3: Advanced",
+                      ...
+                    }
+                  ]
+                }
+                            
+                Rules:
+                - Phase 1: Foundation — basics and prerequisites
+                - Phase 2: Core Skills — main skills for dream job
+                - Phase 3: Advanced — advanced topics, real-world projects, interview prep
+                - Each phase 2 to 5 skills
+                - Each skill 4 to 6 steps
+                - steps must follow %s learning style
+                - resources must be free and real — MDN, freeCodeCamp, official docs, YouTube channels
+                - Do not include skills user already has at EXPERT level unless dream job needs advancement
+                """.formatted(
+                dreamJob, userCategory, currentRole, experienceLevel, industries,
+                goalType, projectLevel, learningStyle, weeklyHours,
+                skillLevelsStr.toString(),
+                dreamJob, learningStyle, weeklyHours, goalType, learningStyle
+        );
+    }
+
+    /**
+     * Generates specialization options for a given dream job.
+     * Called before roadmap generation — user picks one specialization.
+     * Returns 4-6 options with title, description, and core technologies.
+     */
+    public SpecializationResponse getSpecializations(String dreamJob) {
+        log.info("Fetching specializations for dream job: {}", dreamJob);
+
+        String requestBody = buildSpecializationRequestBody(dreamJob);
+
+        // direct HTTP call — bypass callApi() which uses extractContent()
+        // extractContent() validates for analysis/careerGuidance sections
+        // specialization response has neither — needs its own extractor
+        Request request = new Request.Builder()
+                .url(apiUrl)
+                .addHeader("Content-Type", "application/json")
+                .addHeader("Authorization", "Bearer " + apiKey)
+                .post(RequestBody.create(requestBody, MediaType.parse("application/json")))
+                .build();
+
+        try (Response response = httpClient.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                log.error("Groq API error for specializations: {}", response.code());
+                throw new GeminiApiException("Failed to get specializations. Please try again.");
+            }
+
+            String responseBody = response.body() != null ? response.body().string() : "";
+            String content = extractSpecializationContent(responseBody);
+            return parseSpecializationResponse(dreamJob, content);
+
+        } catch (IOException ex) {
+            log.error("Groq connection failed for specializations: {}", ex.getMessage());
+            throw new GeminiApiException("Failed to connect to AI service. Please try again.");
+        }
+    }
+:wq
+
+    /**
+     * Builds request body for specialization generation.
+     * Low temperature — we want consistent, factual options not creative ones.
+     */
+    private String buildSpecializationRequestBody(String dreamJob) {
+        String systemPrompt = """
+            You are a career guidance expert. Return ONLY valid JSON — no explanation, no markdown.
+            """;
+
+        String userPrompt = """
+            List all major specializations for this dream job: "%s"
+            
+            Return ONLY this exact JSON:
+            {
+              "specializations": [
+                {
+                  "title": "specialization name",
+                  "description": "one line — main technologies involved",
+                  "coreTech": ["tech1", "tech2", "tech3", "tech4"]
+                }
+              ]
+            }
+            
+            Rules:
+            - Return 4 to 6 specializations — most common and in-demand ones only
+            - Each specialization must be genuinely distinct from others
+            - coreTech must list 3 to 5 core technologies for that specialization
+            - If the dream job has no clear specializations (e.g. "Android Developer"),
+              return one option with title same as dream job
+            - Do not include niche or outdated specializations
+            """.formatted(dreamJob);
+
+        return """
+            {
+              "model": "%s",
+              "messages": [
+                {"role": "system", "content": "%s"},
+                {"role": "user", "content": "%s"}
+              ],
+              "max_tokens": 800,
+              "temperature": 0.1,
+              "response_format": {"type": "json_object"}
+            }
+            """.formatted(model, escapeJson(systemPrompt), escapeJson(userPrompt));
+    }
+
+    /**
+     * Parses Groq specialization response into SpecializationResponse DTO.
+     * Throws GeminiApiException if response is malformed.
+     */
+    private SpecializationResponse parseSpecializationResponse(String dreamJob, String json) {
+        try {
+            JsonNode root = objectMapper.readTree(json);
+            JsonNode specs = root.path("specializations");
+
+            List<SpecializationResponse.SpecializationOption> options = new ArrayList<>();
+
+            for (JsonNode spec : specs) {
+                List<String> coreTech = new ArrayList<>();
+                spec.path("coreTech").forEach(t -> coreTech.add(t.asText()));
+
+                options.add(new SpecializationResponse.SpecializationOption(
+                        spec.path("title").asText(),
+                        spec.path("description").asText(),
+                        coreTech
+                ));
+            }
+
+            return new SpecializationResponse(dreamJob, options);
+
+        } catch (Exception ex) {
+            log.error("Failed to parse specialization response: {}", ex.getMessage());
+            throw new GeminiApiException("Failed to get specializations. Please try again.");
+        }
+    }
+
+    /**
+     * Extracts content for specialization response.
+     * Does NOT validate for analysis/careerGuidance sections —
+     * specialization response has different structure.
+     */
+    private String extractSpecializationContent(String responseBody) {
+        try {
+            JsonNode root = objectMapper.readTree(responseBody);
+            String content = root
+                    .path("choices").get(0)
+                    .path("message")
+                    .path("content")
+                    .asText();
+
+            if (content == null || content.isBlank()) {
+                throw new GeminiApiException("AI returned empty response. Please try again.");
+            }
+
+            // strip markdown fences if present
+            content = content
+                    .replaceAll("(?s)```json\\s*", "")
+                    .replaceAll("(?s)```\\s*", "")
+                    .trim();
+
+            // validate it's at least valid JSON
+            objectMapper.readTree(content);
+
+            log.info("Specialization response extracted successfully");
+            return content;
+
+        } catch (GeminiApiException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            log.error("Failed to parse specialization response: {}", ex.getMessage());
+            throw new GeminiApiException("AI returned unreadable response. Please try again.");
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

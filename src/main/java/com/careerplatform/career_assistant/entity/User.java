@@ -71,6 +71,18 @@ public class User {
     @Column(name = "work_preference", length = 50)
     private String workPreference;
 
+    // skillLevels — {"React.js": "Beginner", "Java": "Intermediate"}
+    @Column(columnDefinition = "json",name = "skill_levels")
+    private String skillLevels;
+
+    // weeklyHours — how many hours per week user can dedicate
+    @Column(name = "weekly_hours")
+    private Integer weeklyHours;
+
+    // learningStyle — "Videos" / "Docs" / "Projects" / "Mixed"
+    @Column(name = "learning_style")
+    private String learningStyle;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
