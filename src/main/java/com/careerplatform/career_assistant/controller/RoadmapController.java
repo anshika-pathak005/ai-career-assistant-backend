@@ -1,6 +1,7 @@
 package com.careerplatform.career_assistant.controller;
 
 import com.careerplatform.career_assistant.dto.request.RoadmapGenerationRequest;
+import com.careerplatform.career_assistant.dto.request.StepCompletionRequest;
 import com.careerplatform.career_assistant.dto.response.RoadmapResponse;
 import com.careerplatform.career_assistant.dto.response.SpecializationResponse;
 import com.careerplatform.career_assistant.service.RoadmapService;
@@ -57,6 +58,33 @@ public class RoadmapController {
         log.info("Roadmap history fetch request received");
         return ResponseEntity.ok(roadmapService.getRoadmapHistory());
     }
+
+    /**
+     * GET /api/roadmap/{id}
+     * Returns full roadmap by id with all phases, skills, steps.
+     * Used after generate redirect and when user revisits roadmap.
+     */
+    @GetMapping("/{id}")
+    public ResponseEntity<RoadmapResponse> getRoadmapById(@PathVariable Long id) {
+        log.info("Roadmap fetch request for id: {}", id);
+        return ResponseEntity.ok(roadmapService.getRoadmapById(id));
+    }
+
+    /**
+     * PATCH /api/roadmap/{roadmapId}/step/{stepId}
+     * Marks a step as completed or not completed.
+     * Body: { "completed": true/false }
+     */
+    @PatchMapping("/{roadmapId}/step/{stepId}")
+    public ResponseEntity<Void> updateStepCompletion(
+            @PathVariable Long roadmapId,
+            @PathVariable Long stepId,
+            @RequestBody StepCompletionRequest request) {
+        log.info("Step completion update for roadmapId: {}, stepId: {}", roadmapId, stepId);
+        roadmapService.updateStepCompletion(roadmapId, stepId, request.getCompleted(),request.getSkipped());
+        return ResponseEntity.noContent().build(); // 204
+    }
+
 
     /**
      * GET /api/roadmap/specializations

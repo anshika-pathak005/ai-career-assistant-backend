@@ -19,6 +19,7 @@ public class RoadmapResponse {
     private String summary;
     private Integer totalEstimatedWeeks;
     private LocalDateTime generatedAt;
+    private Integer overallProgress;
     private List<PhaseDto> phases;
 
     @Data
@@ -30,6 +31,7 @@ public class RoadmapResponse {
         private String description;
         private Integer phaseOrder;
         private Integer estimatedWeeks;
+        private Integer phaseProgress;
         private List<SkillDto> skills;
     }
 
@@ -44,7 +46,11 @@ public class RoadmapResponse {
         private String targetLevel;
         private String startingLevel;
         private Boolean isExistingSkill;
+        private String skillType;           // SKILL | TOOL | PROJECT
         private String resources;
+        private String projectDescription;  // only for PROJECT type
+        private String techStack;           // only for PROJECT type (JSON string)
+        private Integer skillProgress;      // 0-100
         private List<StepDto> steps;
     }
 
@@ -58,5 +64,6 @@ public class RoadmapResponse {
         private Integer stepOrder;
         private Integer estimatedHours;
         private Boolean completed;
+        private Boolean skipped; // new
     }
 }

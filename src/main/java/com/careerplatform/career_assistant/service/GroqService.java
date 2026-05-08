@@ -42,7 +42,8 @@ public class GroqService {
      * Resume flow entry point.
      * Sends cleaned resume text + full user profile to Groq.
      * User profile provides context for personalized gap analysis and roadmap.
-     */    public String analyzeResume(String resumeText, User user) {
+     */
+    public String analyzeResume(String resumeText, User user) {
         log.info("Sending resume to Groq for userId: {}", user.getId());
         String requestBody = buildRequestBody(buildSystemPrompt(), buildResumeUserPrompt(resumeText, user));
         return callApi(requestBody);
@@ -489,24 +490,29 @@ public class GroqService {
 
     private String buildRoadmapSystemPrompt() {
         return """
-            You are an expert career coach and curriculum designer with 15+ years of experience building learning paths for software developers.
+            You are an expert career coach and curriculum designer with 15+ years of experience.
             
             STRICT RULES — follow every rule exactly or return {}:
             1. Return ONLY valid JSON — no explanation, no markdown, no text outside JSON
-            2. JSON must have exactly these top-level keys: summary, totalEstimatedWeeks, phases
+            2. JSON must have exactly: summary, totalEstimatedWeeks, phases
             3. Never return null — use "" for strings, 0 for numbers, [] for arrays
-            4. All fields must be present — do not omit any field
-            5. Roadmap must have exactly 3 phases — Foundation, Core Skills, Advanced
-            6. Each phase must have 2 to 5 skills
-            7. Each skill must have exactly 4 to 6 steps
-            8. Every skill, step, and resource must be specific to the dream job
-            9. For existing skills — start from user's current level, not from scratch
-            10. For missing skills — start from BEGINNER
-            11. estimatedDays per skill must be realistic — not too short, not too long
-            12. resources must be real, specific, and free — MDN, freeCodeCamp, official docs etc.
-            13. Steps must follow the user's learning style preference
-            14. Timeline must match user's weekly hours availability
-            15. If you cannot follow this structure exactly, return {}
+            4. Roadmap must have exactly 4 phases in this order:
+               Phase 1: Foundation
+               Phase 2: Core Skills
+               Phase 3: Advanced + Tools
+               Phase 4: Projects
+            5. Phase 1, 2, 3: each must have 3 to 4 skills
+            6. Phase 4 (Projects): must have exactly 3 to 4 project ideas
+            7. Each skill in Phase 1-3 must have exactly 6 to 8 learning steps
+            8. Each project in Phase 4 must have 4 to 6 milestone steps
+            9. Phase 3 must include 1 to 2 tools (skillType: TOOL) alongside skills
+            10. skillType must be exactly: SKILL, TOOL, or PROJECT
+            11. PROJECT type skills must have projectDescription and techStack fields
+            12. Every skill and project must directly relate to the dream job and specialization
+            13. steps must follow the user's learning style
+            14. Timeline must be realistic based on weekly hours
+            15. resources must be real and free — MDN, freeCodeCamp, official docs, YouTube
+            16. If you cannot follow this structure exactly, return {}
             """;
     }
 
@@ -584,53 +590,87 @@ public class GroqService {
                   "summary": "2-3 sentences describing this personalized roadmap and what user will achieve",
                   "totalEstimatedWeeks": <realistic integer based on weekly hours and content>,
                   "phases": [
-                    {
-                      "title": "Phase 1: Foundation",
-                      "description": "what this phase covers and why",
-                      "estimatedWeeks": <integer>,
-                      "skills": [
                         {
-                          "skillName": "string",
-                          "isExistingSkill": <true if user listed this skill, false if new>,
-                          "startingLevel": "BEGINNER or INTERMEDIATE or ADVANCED or EXPERT",
-                          "targetLevel": "BEGINNER or INTERMEDIATE or ADVANCED or EXPERT",
-                          "estimatedDays": <realistic integer>,
-                          "resources": ["specific free resource 1", "specific free resource 2"],
-                          "steps": [
+                          "title": "Phase 1: Foundation",
+                          "description": "what this phase covers",
+                          "estimatedWeeks": <integer>,
+                          "skills": [
                             {
-                              "title": "short step title",
-                              "description": "exactly what to do in this step — specific and actionable",
-                              "estimatedHours": <integer>
+                              "skillName": "string",
+                              "skillType": "SKILL",
+                              "isExistingSkill": <boolean>,
+                              "startingLevel": "BEGINNER or INTERMEDIATE or ADVANCED or EXPERT",
+                              "targetLevel": "BEGINNER or INTERMEDIATE or ADVANCED or EXPERT",
+                              "estimatedDays": <integer>,
+                              "resources": ["free resource 1", "free resource 2"],
+                              "steps": [
+                                {
+                                  "title": "step title",
+                                  "description": "exactly what to do",
+                                  "estimatedHours": <integer>
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "title": "Phase 2: Core Skills",
+                          ...same structure as Phase 1...
+                        },
+                        {
+                          "title": "Phase 3: Advanced + Tools",
+                          "description": "advanced concepts and essential tools",
+                          "estimatedWeeks": <integer>,
+                          "skills": [
+                            {
+                              ...same as Phase 1 skills with skillType: SKILL or TOOL...
+                            }
+                          ]
+                        },
+                        {
+                          "title": "Phase 4: Projects",
+                          "description": "real-world projects to build your portfolio",
+                          "estimatedWeeks": <integer>,
+                          "skills": [
+                            {
+                              "skillName": "Project title",
+                              "skillType": "PROJECT",
+                              "isExistingSkill": false,
+                              "estimatedDays": <integer — realistic build time>,
+                              "projectDescription": "what this project is and what you will learn",
+                              "techStack": ["tech1", "tech2", "tech3"],
+                              "resources": ["helpful resource for this project"],
+                              "steps": [
+                                {
+                                  "title": "milestone title",
+                                  "description": "what to build in this milestone",
+                                  "estimatedHours": <integer>
+                                }
+                              ]
                             }
                           ]
                         }
                       ]
-                    },
-                    {
-                      "title": "Phase 2: Core Skills",
-                      ...
-                    },
-                    {
-                      "title": "Phase 3: Advanced",
-                      ...
                     }
-                  ]
-                }
-                            
-                Rules:
-                - Phase 1: Foundation — basics and prerequisites
-                - Phase 2: Core Skills — main skills for dream job
-                - Phase 3: Advanced — advanced topics, real-world projects, interview prep
-                - Each phase 2 to 5 skills
-                - Each skill 4 to 6 steps
-                - steps must follow %s learning style
-                - resources must be free and real — MDN, freeCodeCamp, official docs, YouTube channels
-                - Do not include skills user already has at EXPERT level unless dream job needs advancement
-                """.formatted(
-                dreamJob, userCategory, currentRole, experienceLevel, industries,
-                goalType, projectLevel, learningStyle, weeklyHours,
-                skillLevelsStr.toString(),
-                dreamJob, learningStyle, weeklyHours, goalType, learningStyle
+                    """.formatted(
+                dreamJob,                    // 1 - Dream Job
+                specialization,              // 2 - Specialization
+                userCategory,                // 3 - User Category
+                currentRole,                 // 4 - Current Role
+                experienceLevel,             // 5 - Experience Level
+                industries,                  // 6 - Target Industries
+                goalType,                    // 7 - Goal Type
+                projectLevel,                // 8 - Project Level
+                learningStyle,               // 9 - Learning Style
+                weeklyHours,                 // 10 - Weekly Hours
+                skillLevelsStr.toString(),   // 11 - CURRENT SKILLS AND LEVELS
+                dreamJob,                    // 12 - "Dream job is '%s'"
+                specialization,              // 13 - "with specialization '%s'"
+                specialization,              // 14 - "relevant to '%s' specialization"
+                learningStyle,               // 15 - "Learning style is %s"
+                weeklyHours,                 // 16 - "User has %s hours/week"
+                goalType,                    // 17 - "Goal is %s"
+                learningStyle                // 18 - "steps must follow %s learning style"
         );
     }
 
@@ -669,7 +709,6 @@ public class GroqService {
             throw new GeminiApiException("Failed to connect to AI service. Please try again.");
         }
     }
-:wq
 
     /**
      * Builds request body for specialization generation.
@@ -681,27 +720,35 @@ public class GroqService {
             """;
 
         String userPrompt = """
-            List all major specializations for this dream job: "%s"
-            
-            Return ONLY this exact JSON:
+        List specializations for this dream job: "%s"
+        
+        Return ONLY this exact JSON:
+        {
+          "specializations": [
             {
-              "specializations": [
-                {
-                  "title": "specialization name",
-                  "description": "one line — main technologies involved",
-                  "coreTech": ["tech1", "tech2", "tech3", "tech4"]
-                }
-              ]
+              "title": "specialization name",
+              "description": "one line — main technologies involved",
+              "coreTech": ["tech1", "tech2", "tech3", "tech4"]
             }
-            
-            Rules:
-            - Return 4 to 6 specializations — most common and in-demand ones only
-            - Each specialization must be genuinely distinct from others
-            - coreTech must list 3 to 5 core technologies for that specialization
-            - If the dream job has no clear specializations (e.g. "Android Developer"),
-              return one option with title same as dream job
-            - Do not include niche or outdated specializations
-            """.formatted(dreamJob);
+          ]
+        }
+        
+        Rules:
+        - Return exactly 7 specializations
+        - All 7 must be variations or sub-fields of "%s" specifically
+        - Stay within the same domain — do not go outside "%s" field
+        - Example for "Full Stack Developer":
+            MERN Stack, MEAN Stack, Java Full Stack, Python Full Stack,
+            .NET Full Stack, Flutter Full Stack, Serverless Full Stack
+        - Example for "Data Scientist":
+            Machine Learning, Deep Learning, NLP, Computer Vision,
+            Data Engineering, MLOps, Reinforcement Learning
+        - Each must be genuinely distinct from others
+        - coreTech: 3 to 5 core technologies per specialization
+        - No niche or outdated specializations
+        - If dream job has fewer than 7 clear specializations,
+          include role-level variations like Junior/Mid/Senior tracks
+        """.formatted(dreamJob, dreamJob, dreamJob);
 
         return """
             {

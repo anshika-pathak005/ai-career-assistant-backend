@@ -28,12 +28,12 @@ public class RoadmapSkill {
     private Integer estimatedDays;      // how long to learn this skill
 
     // what level user should reach for this skill
-    @Enumerated(EnumType.STRING)
-    private SkillLevel targetLevel;
+//    @Enumerated(EnumType.STRING)
+    private String targetLevel;
 
     // what level user starts at — from their profile
-    @Enumerated(EnumType.STRING)
-    private SkillLevel startingLevel;
+//    @Enumerated(EnumType.STRING)
+    private String startingLevel;
 
     // is skill already known by user at sufficient level
     // true = included for advancement, false = learning from scratch
@@ -47,4 +47,14 @@ public class RoadmapSkill {
     @OneToMany(mappedBy = "skill", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("stepOrder ASC")
     private List<SkillStep> steps;
+
+    // SKILL = learning skill, TOOL = tool/technology, PROJECT = project idea
+    private String skillType; // "SKILL" | "TOOL" | "PROJECT"
+
+    // only filled for PROJECT type skills
+    @Column(columnDefinition = "text")
+    private String projectDescription;
+
+    @Column(columnDefinition = "json")
+    private String techStack; // ["React", "Node.js", "MongoDB"]
 }

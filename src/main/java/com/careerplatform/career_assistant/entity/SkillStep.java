@@ -28,9 +28,11 @@ public class SkillStep {
 
     // user progress on this step
     private Boolean completed;
+    private Boolean skipped;
 
     @PrePersist
     protected void onCreate() {
         completed = false;
+        skipped = false;
     }
 }
