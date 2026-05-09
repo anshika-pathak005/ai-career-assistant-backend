@@ -2,6 +2,7 @@ package com.careerplatform.career_assistant.service;
 
 import com.careerplatform.career_assistant.dto.request.RoadmapGenerationRequest;
 import com.careerplatform.career_assistant.dto.request.UpdateProfileRequest;
+import com.careerplatform.career_assistant.dto.response.GenerationLimitResponse;
 import com.careerplatform.career_assistant.dto.response.UserProfileResponse;
 import com.careerplatform.career_assistant.entity.User;
 import com.careerplatform.career_assistant.exception.ResourceNotFoundException;
@@ -20,6 +21,7 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final ObjectMapper objectMapper;
+    private final GenerationLimitService generationLimitService;
 
     /**
      * Fetches complete profile of currently logged in user.
@@ -134,10 +136,11 @@ public class UserService {
                 user.getProjectLevel(),
                 user.getWorkPreference(),
                 user.getWeeklyHours(),
-//                user.getLearningStyle(),
+                user.getLearningStyle(),
                 user.getSkillLevels(),
                 user.getWizardStep(),
-                user.getIsProfileComplete()
+                user.getIsProfileComplete(),
+                generationLimitService.buildLimitResponse(user)
         );
     }
 
@@ -150,5 +153,16 @@ public class UserService {
     private Long getCurrentUserId() {
         return Long.parseLong(SecurityContextHolder.getContext()
                 .getAuthentication().getName());
+    }
+
+    /**
+     * Returns current generation usage for logged in user.
+     * Used by dashboard to show "2/3 roadmaps used this month".
+     */
+    public GenerationLimitResponse getUsage() {
+        Long userId = getCurrentUserId();
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+        return generationLimitService.buildLimitResponse(user);
     }
 }

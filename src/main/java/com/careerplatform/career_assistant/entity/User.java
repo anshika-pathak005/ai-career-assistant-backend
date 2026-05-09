@@ -90,4 +90,19 @@ public class User {
     @UpdateTimestamp
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
+
+    // ── plan and generation tracking ──────────────────────────────────
+
+    // FREE or PRO
+    @Column(nullable = false)
+    private String plan = "FREE";
+
+    // how many roadmaps generated this month
+    @Column(nullable = false)
+    private Integer roadmapsGeneratedThisMonth = 0;
+
+    // tracks which month the counter belongs to — "2026-05"
+// when this changes → counter resets automatically
+    @Column(nullable = false)
+    private String currentMonthYear = "";
 }

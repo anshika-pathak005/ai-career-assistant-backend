@@ -481,7 +481,7 @@ public class GroqService {
                 {"role": "system", "content": "%s"},
                 {"role": "user", "content": "%s"}
               ],
-              "max_tokens": 4000,
+              "max_tokens": 7000,
               "temperature": 0.2,
               "response_format": {"type": "json_object"}
             }
@@ -490,47 +490,66 @@ public class GroqService {
 
     private String buildRoadmapSystemPrompt() {
         return """
-            You are an expert career coach and curriculum designer with 15+ years of experience.
+        You are an expert technical curriculum designer with 10+ years of experience building job-ready roadmaps.
+        
+        STRICT RULES — follow every rule exactly:
+        1. Return ONLY valid JSON — no markdown, no explanations, no text outside JSON
+        2. JSON must have: summary, totalEstimatedWeeks, phases
+        3. totalEstimatedWeeks = based on weeklyHours (15 hours/week = 20-24 weeks)
+        4. Must have EXACTLY 5 phases in this order:
+           Phase 1: Foundation (Beginner level skills)
+           Phase 2: Core Intermediate (Mid-level skills)
+           Phase 3: Advanced Concepts (Senior-level skills)
+           Phase 4: Tools & Best Practices (Git, Docker, Testing, CI/CD)
+           Phase 5: Portfolio Projects (5 projects minimum)
+        
+        5. Phase 1-4: each has 3-4 skills
+        6. Phase 5: exactly 5 projects (skillType: PROJECT)
+        
+        7. CRITICAL: Steps must be SPECIFIC TOPICS, not generic actions
+           WRONG: "Set up environment", "Practice exercises", "Review skills"
+           CORRECT: "Variables & Data Types", "Functions & Scope", "Components & Props"
+        
+        8. Each skill in Phase 1-4 must have exactly 6-8 steps
+        9. Each project in Phase 5 must have 5-7 milestone steps
+        10. Each step must have: title, description, estimatedHours (2-8 hours)
+        
+        11. RESOURCE RULES - VERY IMPORTANT:
+            - Each skill and project must have exactly 3 resources
+            - Each resource must have: name, url, type
+            - URLs must be REAL, WORKING, and FREE
+            - NEVER invent fake URLs like "https://example.com"
+            - URL types: "DOCUMENTATION", "COURSE", "VIDEO", "ARTICLE", "PRACTICE"
             
-            STRICT RULES — follow every rule exactly or return {}:
-            1. Return ONLY valid JSON — no explanation, no markdown, no text outside JSON
-            2. JSON must have exactly: summary, totalEstimatedWeeks, phases
-            3. Never return null — use "" for strings, 0 for numbers, [] for arrays
-            4. Roadmap must have exactly 4 phases in this order:
-               Phase 1: Foundation
-               Phase 2: Core Skills
-               Phase 3: Advanced + Tools
-               Phase 4: Projects
-            5. Phase 1, 2, 3: each must have 3 to 4 skills
-            6. Phase 4 (Projects): must have exactly 3 to 4 project ideas
-            7. Each skill in Phase 1-3 must have exactly 6 to 8 learning steps
-            8. Each project in Phase 4 must have 4 to 6 milestone steps
-            9. Phase 3 must include 1 to 2 tools (skillType: TOOL) alongside skills
-            10. skillType must be exactly: SKILL, TOOL, or PROJECT
-            11. PROJECT type skills must have projectDescription and techStack fields
-            12. Every skill and project must directly relate to the dream job and specialization
-            13. steps must follow the user's learning style
-            14. Timeline must be realistic based on weekly hours
-            15. resources must be real and free — MDN, freeCodeCamp, official docs, YouTube
-            16. If you cannot follow this structure exactly, return {}
-            """;
+            Valid FREE resource URLs:
+            - Documentation: https://developer.mozilla.org/, https://docs.python.org/, https://react.dev/
+            - Courses: https://www.freecodecamp.org/, https://www.w3schools.com/
+            - Videos: https://youtu.be/ (specific YouTube video)
+            - Practice: https://leetcode.com/, https://www.hackerrank.com/
+            
+            Example:
+            "resources": [
+              {"name": "MDN Web Docs - JavaScript", "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript", "type": "DOCUMENTATION"},
+              {"name": "freeCodeCamp - JS Algorithms", "url": "https://www.freecodecamp.org/learn/javascript-algorithms-and-data-structures/", "type": "COURSE"},
+              {"name": "JavaScript Crash Course", "url": "https://youtu.be/PkZNo7MFNFg", "type": "VIDEO"}
+            ]
+        
+        12. If you cannot follow this structure exactly, return {}
+        """;
     }
 
     private String buildRoadmapUserPrompt(User user, RoadmapGenerationRequest request) {
-
-        String dreamJob       = safe(user.getDreamJob(), "Not specified");
-        String userCategory   = safe(user.getUserCategory(), "Not specified");
-        String currentRole    = safe(user.getCurrentRole(), "Not specified");
-        String industries     = safeList(user.getIndustries(), "Not specified");
+        String dreamJob = safe(user.getDreamJob(), "Not specified");
+        String specialization = request.getSpecialization() != null ? request.getSpecialization() : "Not specified";
+        String userCategory = safe(user.getUserCategory(), "Not specified");
+        String currentRole = safe(user.getCurrentRole(), "Not specified");
+        String industries = safeList(user.getIndustries(), "Not specified");
         String experienceLevel = request.getExperienceYears() != null ? request.getExperienceYears() : "FRESHER";
-        String goalType        = request.getGoalType() != null ? request.getGoalType() : "GET_JOB";
-        String projectLevel    = request.getProjectLevel() != null ? request.getProjectLevel() : "BEGINNER";
-        String learningStyle   = request.getLearningStyle() != null ? request.getLearningStyle() : "BALANCED";
-        String weeklyHours     = request.getWeeklyHours() != null ? request.getWeeklyHours().toString() : "5";
-        String specialization = request.getSpecialization() != null
-                ? request.getSpecialization() : "Not specified";
+        String goalType = request.getGoalType() != null ? request.getGoalType() : "GET_JOB";
+        String projectLevel = request.getProjectLevel() != null ? request.getProjectLevel() : "BEGINNER";
+        String learningStyle = request.getLearningStyle() != null ? request.getLearningStyle() : "BALANCED";
+        String weeklyHours = request.getWeeklyHours() != null ? request.getWeeklyHours().toString() : "15";
 
-        // build skill levels string — "React.js: INTERMEDIATE, Java: BEGINNER"
         StringBuilder skillLevelsStr = new StringBuilder();
         if (request.getSkillLevels() != null) {
             request.getSkillLevels().forEach((skill, level) ->
@@ -539,13 +558,13 @@ public class GroqService {
         }
 
         return """
-                Generate a complete personalized career roadmap for this user.
-                            
+                Generate a complete personalized career roadmap for: "%s" with specialization "%s"
+                        
                 ═══════════════════════════════════════════════
                 USER PROFILE
                 ═══════════════════════════════════════════════
-                Dream Job        : %s         ← roadmap must lead here
-                Specialization   : %s         ← focus roadmap on this specific path
+                Dream Job        : %s
+                Specialization   : %s
                 User Category    : %s
                 Current Role     : %s
                 Experience Level : %s
@@ -562,115 +581,247 @@ public class GroqService {
                 ═══════════════════════════════════════════════
                 %s
                 ═══════════════════════════════════════════════
-                            
-                CRITICAL INSTRUCTIONS:
-                - Dream job is "%s" with specialization "%s"
-                - Every skill must be directly relevant to "%s" specialization
-                - If specialization is "MERN Stack" → only include MongoDB, Express, React, Node skills
-                - If specialization is "Java Full Stack" → only include Spring Boot, React, MySQL skills
-                - Do not include skills from other specializations       
-                - For skills listed above: start from their current level, advance to what dream job needs
-                - For skills NOT listed but needed for dream job: add them starting from BEGINNER
-                - Learning style is %s — structure steps accordingly:
-                    PROJECT_FIRST  → start each skill with a mini project, then explain concepts
-                    THEORY_FIRST   → explain concepts fully, then apply with exercises
-                    BALANCED       → alternate between concept and immediate practice
-                    GUIDED         → highly structured, small steps, lots of checkpoints
-                - User has %s hours/week — set realistic timelines based on this
-                - Goal is %s — shape the roadmap accordingly:
-                    GET_JOB        → focus on interview-ready skills, portfolio projects, job keywords
-                    IMPROVE_SKILLS → focus on depth over breadth, advanced concepts
-                    BUILD_PROJECTS → focus on project-based learning, real-world applications
-                    INTERVIEW_PREP → focus on DSA, system design, common interview topics
-                    EXPLORE        → broader coverage, less depth, more variety
-                            
-                Return ONLY this exact JSON structure:
-                            
+                        
+                ================================================
+                DOMAIN DETECTION (Auto-adjust based on dream job)
+                ================================================
+                        
+                Based on dream job "%s", identify the domain and generate relevant skills:
+                        
+                For "Full Stack" or "Web Developer":
+                - Frontend: HTML, CSS, JavaScript, React/Angular/Vue
+                - Backend: Node.js/Python/Java, Express/Django/Spring Boot
+                - Database: SQL, MongoDB/PostgreSQL
+                - Tools: Git, Docker, Testing, Deployment
+                - Projects: 5 web applications (Task Manager, E-commerce, Blog, Social Media, Capstone)
+                        
+                For "Data Scientist" or "Data Analyst":
+                - Python (Pandas, NumPy, Matplotlib)
+                - SQL for data extraction
+                - Statistics & Probability
+                - Machine Learning (scikit-learn, TensorFlow)
+                - Data Visualization (Tableau, Power BI)
+                - Projects: 5 data projects (EDA, Predictive Modeling, Clustering, NLP, Dashboard)
+                        
+                For "DevOps" or "Cloud Engineer":
+                - Linux & Shell Scripting
+                - CI/CD (Jenkins, GitHub Actions)
+                - Containerization (Docker, Kubernetes)
+                - Cloud (AWS/Azure/GCP)
+                - Infrastructure as Code (Terraform)
+                - Projects: 5 DevOps projects (CI/CD Pipeline, Containerized App, K8s Deployment, Monitoring Stack, IaC)
+                        
+                For "Mobile Developer":
+                - Platform (iOS: Swift, Android: Kotlin, Cross: Flutter/React Native)
+                - UI/UX principles for mobile
+                - State management
+                - API integration
+                - App store deployment
+                - Projects: 5 mobile apps (Weather, Task Manager, Chat, E-commerce, Social Media)
+                        
+                For "AI/ML Engineer":
+                - Python fundamentals
+                - Data preprocessing
+                - ML algorithms (regression, classification, clustering)
+                - Deep Learning (Neural Networks)
+                - MLOps (model deployment)
+                - Projects: 5 AI projects (Predictive Model, Image Classification, NLP, Recommendation, LLM App)
+                        
+                ================================================
+                STEP TOPIC EXAMPLES (Follow this pattern)
+                ================================================
+                        
+                For Programming Language (Python/Java/JavaScript):
+                ✓ "Variables & Data Types"
+                ✓ "Control Flow: if-else, loops"
+                ✓ "Functions & Scope"
+                ✓ "Data Structures: Lists, Dictionaries, Objects"
+                ✓ "Error Handling & Debugging"
+                ✓ "File I/O Operations"
+                        
+                For Frontend Framework (React/Angular/Vue):
+                ✓ "Components & Props"
+                ✓ "State Management with Hooks"
+                ✓ "Event Handling & Forms"
+                ✓ "Routing & Navigation"
+                ✓ "API Integration (fetch/axios)"
+                ✓ "Performance Optimization"
+                        
+                For Backend Framework (Express/Django/Spring):
+                ✓ "Setting up routes & endpoints"
+                ✓ "Middleware & Request handling"
+                ✓ "Database integration (ORM/ODM)"
+                ✓ "Authentication & JWT"
+                ✓ "Error handling & logging"
+                ✓ "API documentation"
+                        
+                For Database (SQL/MongoDB):
+                ✓ "CRUD operations"
+                ✓ "Schema/Model design"
+                ✓ "Querying & filtering"
+                ✓ "Relationships & Joins"
+                ✓ "Indexing for performance"
+                ✓ "Aggregation pipelines"
+                        
+                For Tools (Git/Docker):
+                ✓ "git init, add, commit workflow"
+                ✓ "Branching & merging strategies"
+                ✓ "Remote repositories (push, pull, clone)"
+                ✓ "Dockerfile & container basics"
+                ✓ "Docker Compose for multi-container"
+                ✓ "CI/CD pipeline setup"
+                        
+                ================================================
+                RESOURCE FORMAT (MUST FOLLOW EXACTLY)
+                ================================================
+                        
+                Each skill and project must have "resources" array with EXACTLY 3 items.
+                Each item must have this structure:
+                        
                 {
-                  "summary": "2-3 sentences describing this personalized roadmap and what user will achieve",
-                  "totalEstimatedWeeks": <realistic integer based on weekly hours and content>,
+                  "name": "Descriptive name of resource",
+                  "url": "https://actual-working-url.com",
+                  "type": "DOCUMENTATION" or "COURSE" or "VIDEO" or "ARTICLE" or "PRACTICE"
+                }
+                        
+                REAL RESOURCE EXAMPLES:
+                        
+                HTML/CSS Resources:
+                - {"name": "MDN HTML Reference", "url": "https://developer.mozilla.org/en-US/docs/Web/HTML", "type": "DOCUMENTATION"}
+                - {"name": "freeCodeCamp Responsive Design", "url": "https://www.freecodecamp.org/learn/2022/responsive-web-design/", "type": "COURSE"}
+                - {"name": "CSS Flexbox Tutorial", "url": "https://youtu.be/JJSoEo8JSnc", "type": "VIDEO"}
+                        
+                JavaScript Resources:
+                - {"name": "MDN JavaScript Guide", "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript", "type": "DOCUMENTATION"}
+                - {"name": "JavaScript.info", "url": "https://javascript.info/", "type": "COURSE"}
+                - {"name": "LeetCode Practice", "url": "https://leetcode.com/problemset/javascript/", "type": "PRACTICE"}
+                        
+                React Resources:
+                - {"name": "React Official Docs", "url": "https://react.dev/learn", "type": "DOCUMENTATION"}
+                - {"name": "React Tutorial for Beginners", "url": "https://youtu.be/SqcY0GlETPk", "type": "VIDEO"}
+                - {"name": "Scrimba React Course", "url": "https://scrimba.com/learn/learnreact", "type": "COURSE"}
+                        
+                ================================================
+                        
+                Return ONLY this exact JSON structure:
+                        
+                {
+                  "summary": "2-3 sentence personalized summary for becoming a %s",
+                  "totalEstimatedWeeks": <integer based on weeklyHours: weeklyHours = %s, calculate total weeks>,
                   "phases": [
+                    {
+                      "title": "Phase 1: Foundation",
+                      "description": "Build fundamental skills for %s",
+                      "estimatedWeeks": <integer>,
+                      "skills": [
                         {
-                          "title": "Phase 1: Foundation",
-                          "description": "what this phase covers",
-                          "estimatedWeeks": <integer>,
-                          "skills": [
+                          "skillName": "Specific skill name",
+                          "skillType": "SKILL",
+                          "isExistingSkill": <true/false based on user's current skills>,
+                          "startingLevel": "BEGINNER",
+                          "targetLevel": "INTERMEDIATE",
+                          "estimatedDays": <integer 7-21>,
+                          "resources": [
+                            {"name": "...", "url": "...", "type": "..."},
+                            {"name": "...", "url": "...", "type": "..."},
+                            {"name": "...", "url": "...", "type": "..."}
+                          ],
+                          "steps": [
                             {
-                              "skillName": "string",
-                              "skillType": "SKILL",
-                              "isExistingSkill": <boolean>,
-                              "startingLevel": "BEGINNER or INTERMEDIATE or ADVANCED or EXPERT",
-                              "targetLevel": "BEGINNER or INTERMEDIATE or ADVANCED or EXPERT",
-                              "estimatedDays": <integer>,
-                              "resources": ["free resource 1", "free resource 2"],
-                              "steps": [
-                                {
-                                  "title": "step title",
-                                  "description": "exactly what to do",
-                                  "estimatedHours": <integer>
-                                }
-                              ]
+                              "title": "Specific topic title",
+                              "description": "What to learn in this step",
+                              "estimatedHours": <integer 2-8>
                             }
                           ]
+                        }
+                      ]
+                    },
+                    {
+                      "title": "Phase 2: Core Intermediate",
+                      "description": "Build mid-level skills for %s",
+                      "estimatedWeeks": <integer>,
+                      "skills": [ ... same structure ... ]
+                    },
+                    {
+                      "title": "Phase 3: Advanced Concepts",
+                      "description": "Master advanced topics for %s",
+                      "estimatedWeeks": <integer>,
+                      "skills": [ ... same structure ... ]
+                    },
+                    {
+                      "title": "Phase 4: Tools & Best Practices",
+                      "description": "Learn essential development tools",
+                      "estimatedWeeks": <integer>,
+                      "skills": [
+                        {
+                          "skillName": "Git & GitHub",
+                          "skillType": "TOOL",
+                          "isExistingSkill": false,
+                          "startingLevel": "BEGINNER",
+                          "targetLevel": "INTERMEDIATE",
+                          "estimatedDays": 7,
+                          "resources": [...],
+                          "steps": [...]
                         },
                         {
-                          "title": "Phase 2: Core Skills",
-                          ...same structure as Phase 1...
+                          "skillName": "Docker Basics",
+                          "skillType": "TOOL",
+                          ...
                         },
                         {
-                          "title": "Phase 3: Advanced + Tools",
-                          "description": "advanced concepts and essential tools",
-                          "estimatedWeeks": <integer>,
-                          "skills": [
+                          "skillName": "Testing (Jest/React Testing Library)",
+                          "skillType": "TOOL",
+                          ...
+                        }
+                      ]
+                    },
+                    {
+                      "title": "Phase 5: Portfolio Projects",
+                      "description": "Build job-ready projects",
+                      "estimatedWeeks": <integer>,
+                      "skills": [
+                        {
+                          "skillName": "Real Project Name 1",
+                          "skillType": "PROJECT",
+                          "projectDescription": "What this project does and what you will learn",
+                          "techStack": ["tech1", "tech2", "tech3", "tech4", "tech5"],
+                          "estimatedDays": <integer 10-21>,
+                          "resources": [
+                            {"name": "...", "url": "...", "type": "..."},
+                            {"name": "...", "url": "...", "type": "..."},
+                            {"name": "...", "url": "...", "type": "..."}
+                          ],
+                          "steps": [
                             {
-                              ...same as Phase 1 skills with skillType: SKILL or TOOL...
-                            }
-                          ]
-                        },
-                        {
-                          "title": "Phase 4: Projects",
-                          "description": "real-world projects to build your portfolio",
-                          "estimatedWeeks": <integer>,
-                          "skills": [
-                            {
-                              "skillName": "Project title",
-                              "skillType": "PROJECT",
-                              "isExistingSkill": false,
-                              "estimatedDays": <integer — realistic build time>,
-                              "projectDescription": "what this project is and what you will learn",
-                              "techStack": ["tech1", "tech2", "tech3"],
-                              "resources": ["helpful resource for this project"],
-                              "steps": [
-                                {
-                                  "title": "milestone title",
-                                  "description": "what to build in this milestone",
-                                  "estimatedHours": <integer>
-                                }
-                              ]
+                              "title": "Milestone title",
+                              "description": "Specific development phase",
+                              "estimatedHours": <integer 4-12>
                             }
                           ]
                         }
                       ]
                     }
-                    """.formatted(
-                dreamJob,                    // 1 - Dream Job
-                specialization,              // 2 - Specialization
-                userCategory,                // 3 - User Category
-                currentRole,                 // 4 - Current Role
-                experienceLevel,             // 5 - Experience Level
-                industries,                  // 6 - Target Industries
-                goalType,                    // 7 - Goal Type
-                projectLevel,                // 8 - Project Level
-                learningStyle,               // 9 - Learning Style
-                weeklyHours,                 // 10 - Weekly Hours
-                skillLevelsStr.toString(),   // 11 - CURRENT SKILLS AND LEVELS
-                dreamJob,                    // 12 - "Dream job is '%s'"
-                specialization,              // 13 - "with specialization '%s'"
-                specialization,              // 14 - "relevant to '%s' specialization"
-                learningStyle,               // 15 - "Learning style is %s"
-                weeklyHours,                 // 16 - "User has %s hours/week"
-                goalType,                    // 17 - "Goal is %s"
-                learningStyle                // 18 - "steps must follow %s learning style"
+                  ]
+                }
+                        
+                IMPORTANT REMINDERS:
+                - Generate EXACTLY 5 phases
+                - Phase 5 must have EXACTLY 5 projects
+                - Each resource MUST have a REAL URL (no fake links)
+                - Steps must be SPECIFIC TOPICS, not generic actions
+                - All content must be specific to: %s | %s
+                - Use second person ("you", "your") throughout
+                        
+                Now generate the roadmap.
+                """.formatted(
+                dreamJob, specialization,
+                dreamJob, specialization, userCategory, currentRole, experienceLevel, industries,
+                goalType, projectLevel, learningStyle, weeklyHours,
+                skillLevelsStr.toString(),
+                dreamJob,
+                dreamJob, weeklyHours, dreamJob,
+                dreamJob, dreamJob, dreamJob,
+                dreamJob, specialization
         );
     }
 

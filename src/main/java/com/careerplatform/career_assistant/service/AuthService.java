@@ -45,12 +45,15 @@ public class AuthService {
                 .passwordHash(passwordEncoder.encode(request.getPassword()))
                 .wizardStep(1)
                 .isProfileComplete(false)
+                .plan("FREE")
+                .roadmapsGeneratedThisMonth(0)
+                .currentMonthYear("")
                 .build();
 
         User savedUser = userRepository.save(user);
         log.info("User registered successfully with id: {}", savedUser.getId());
 
-        //generating tokens to send on frontend as user has just registered and we want to log them in immediately
+        //generating tokens to send on frontend as user has just registered, and we want to log them in immediately
         String accessToken = jwtUtil.generateToken(savedUser.getId(), savedUser.getEmail());
         String refreshToken = refreshTokenService.generateRefreshToken(savedUser, deviceInfo);
 

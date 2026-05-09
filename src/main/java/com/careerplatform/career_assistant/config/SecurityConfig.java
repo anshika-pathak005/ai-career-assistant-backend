@@ -88,7 +88,7 @@ public class SecurityConfig {
                 "http://localhost:3000",  // Next.js frontend
                 "http://localhost:8080"   // Postman
         ));
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT","PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
         configuration.setAllowCredentials(true);
 

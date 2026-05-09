@@ -11,4 +11,5 @@ import lombok.Data;
 public class GenerateRoadmapResponse {
     private Long roadmapId;
     private String message;
+    private GenerationLimitResponse generationLimit;
 }

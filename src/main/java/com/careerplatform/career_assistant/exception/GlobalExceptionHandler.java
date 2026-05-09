@@ -84,6 +84,14 @@ public class GlobalExceptionHandler {
                 .body(new ErrorResponse(502, "AI analysis failed. Please try again.", LocalDateTime.now()));
     }
 
+    // 429 — monthly roadmap generation limit reached
+    @ExceptionHandler(RoadmapLimitExceededException.class)
+    public ResponseEntity<ErrorResponse> handleRoadmapLimit(RoadmapLimitExceededException ex) {
+        log.error("Roadmap generation limit exceeded: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .body(new ErrorResponse(429, ex.getMessage(), LocalDateTime.now()));
+    }
+
     // 500 — unexpected error, log real cause server side, send generic message to frontend
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErrorResponse> handleAllExceptions(Exception ex) {

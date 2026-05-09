@@ -2,6 +2,7 @@ package com.careerplatform.career_assistant.controller;
 
 import com.careerplatform.career_assistant.dto.request.RoadmapGenerationRequest;
 import com.careerplatform.career_assistant.dto.request.StepCompletionRequest;
+import com.careerplatform.career_assistant.dto.response.GenerateRoadmapResponse;
 import com.careerplatform.career_assistant.dto.response.RoadmapResponse;
 import com.careerplatform.career_assistant.dto.response.SpecializationResponse;
 import com.careerplatform.career_assistant.service.RoadmapService;
@@ -29,7 +30,7 @@ public class RoadmapController {
      * Protected — requires JWT token.
      */
     @PostMapping("/generate")
-    public ResponseEntity<RoadmapResponse> generateRoadmap(
+    public ResponseEntity<GenerateRoadmapResponse> generateRoadmap(
             @Valid @RequestBody RoadmapGenerationRequest request) {
         log.info("Roadmap generation request received");
         return ResponseEntity.ok(roadmapService.generateRoadmap(request));

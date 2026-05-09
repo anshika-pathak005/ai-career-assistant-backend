@@ -20,8 +20,9 @@ public class UserProfileResponse {
     private String projectLevel;
     private String workPreference;
     private Integer weeklyHours;      // new
-//    private String learningStyle;     // new
+    private String learningStyle;     // new
     private String skillLevels;       // new — JSON string {"React": "Intermediate"}
     private Integer wizardStep;
     private Boolean isProfileComplete;
+    private GenerationLimitResponse generationLimit;
 }

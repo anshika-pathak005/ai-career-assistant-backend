@@ -31,6 +31,7 @@ public class RoadmapService {
     private final GroqService groqService;
     private final ObjectMapper objectMapper;
     private final SkillStepRepository skillStepRepository;
+    private final GenerationLimitService generationLimitService;
 
     /**
      * Main roadmap generation method.
@@ -43,12 +44,15 @@ public class RoadmapService {
      *   6. Return complete roadmap response
      */
     @Transactional
-    public RoadmapResponse generateRoadmap(RoadmapGenerationRequest request) {
+    public GenerateRoadmapResponse generateRoadmap(RoadmapGenerationRequest request) {
         Long userId = getCurrentUserId();
         log.info("Roadmap generation started for userId: {}", userId);
 
         // step 1 — save form data to user profile
         User user = userService.saveRoadmapFormData(request);
+
+        // check limit BEFORE generating — throws 429 if exceeded
+        generationLimitService.checkAndIncrement(user);
 
         // step 2 — archive existing active roadmap if exists
         archiveExistingRoadmap(user);
@@ -61,8 +65,19 @@ public class RoadmapService {
         CareerRoadmap roadmap = parseAndSaveRoadmap(user, request, aiResponse);
         log.info("Roadmap saved with id: {}", roadmap.getId());
 
+        // refresh user from DB — counter was updated in checkAndIncrement
+        user = userRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+        log.info("Roadmap generated successfully for userId: {}", userId);
+
+
         // step 6 — build and return response
-        return buildResponse(roadmap);
+        return new GenerateRoadmapResponse(
+                roadmap.getId(),
+                "Roadmap generated successfully",
+                generationLimitService.buildLimitResponse(user) // include usage info
+        );
     }
 
     /**

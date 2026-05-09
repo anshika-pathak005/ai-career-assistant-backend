@@ -1,6 +1,7 @@
 package com.careerplatform.career_assistant.controller;
 
 import com.careerplatform.career_assistant.dto.request.UpdateProfileRequest;
+import com.careerplatform.career_assistant.dto.response.GenerationLimitResponse;
 import com.careerplatform.career_assistant.dto.response.UserProfileResponse;
 import com.careerplatform.career_assistant.service.UserService;
 import lombok.RequiredArgsConstructor;
@@ -39,5 +40,17 @@ public class UserController {
             @RequestBody UpdateProfileRequest request) {
         log.info("Profile update request received");
         return ResponseEntity.ok(userService.updateProfile(request));
+    }
+
+    /**
+     * GET /api/user/usage
+     * Returns current roadmap generation usage for logged in user.
+     * Frontend calls this on dashboard load to show usage indicator.
+     * e.g. "2/3 roadmaps used this month"
+     */
+    @GetMapping("/roadmap-usage")
+    public ResponseEntity<GenerationLimitResponse> getUsage() {
+        log.info("Usage info request received");
+        return ResponseEntity.ok(userService.getUsage());
     }
 }
