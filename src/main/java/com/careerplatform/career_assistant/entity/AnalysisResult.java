@@ -83,6 +83,34 @@ public class AnalysisResult {
     @Column(nullable = false, updatable = false)
     private LocalDateTime analysisDate;
 
+    // one line verdict — "Strong frontend profile, weak on backend depth"
+    @Column(columnDefinition = "text")
+    private String resumeVerdict;
+
+    // recruiter perspective — "A recruiter would see you as..."
+    @Column(columnDefinition = "text")
+    private String recruiterPerspective;
+
+    // top 3 priority skills to learn first
+    @Column(columnDefinition = "json")
+    private String prioritySkills;
+
+    // recommended roles based on resume strengths
+    @Column(columnDefinition = "json")
+    private String recommendedRoles;
+
+    // certifications to get for dream job
+    @Column(columnDefinition = "json")
+    private String recommendedCertifications;
+
+    // section wise analysis
+    @Column(columnDefinition = "json")
+    private String sectionAnalysis;
+
+    // ATS specific suggestions — separate from general improvements
+    @Column(columnDefinition = "json")
+    private String atsSuggestions;
+
     @PrePersist
     protected void onCreate() {
         analysisDate = LocalDateTime.now();

@@ -48,13 +48,32 @@ public class ResumeAnalysisResponse {
     @Data @AllArgsConstructor @NoArgsConstructor
     public static class AnalysisDto {
         private String summary;
+        private String resumeVerdict;           // new — one line badge
+        private String recruiterPerspective;    // new — how recruiter sees them
+        private String dreamJobMatchSummary;
+        private String interviewReadiness;
+
         private List<String> technicalSkills;
         private List<String> strengths;
         private List<String> weaknesses;
         private List<String> missingSkills;
+        private List<String> prioritySkills;
         private List<String> missingKeywords;
+        private List<String> atsSuggestions;
         private List<String> improvementSuggestions;
         private List<String> projectSuggestions;
         private List<String> recommendedLearning;
+        private List<String> recommendedRoles;         // new
+        private List<String> recommendedCertifications;// new
+        private SectionAnalysisDto sectionAnalysis;    // new
+    }
+
+    @Data @AllArgsConstructor @NoArgsConstructor
+    public static class SectionAnalysisDto {
+        private String education;
+        private String skills;
+        private String projects;
+        private String experience;
+        private String certifications;
     }
 }

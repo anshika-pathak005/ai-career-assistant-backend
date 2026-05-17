@@ -174,6 +174,13 @@ public class ResumeProcessingService {
                     .improvementSuggestions(root.path("improvementSuggestions").toString())
                     .projectSuggestions(root.path("projectSuggestions").toString())
                     .recommendedLearning(root.path("recommendedLearning").toString())
+                    .resumeVerdict(text(root, "resumeVerdict"))
+                    .recruiterPerspective(text(root, "recruiterPerspective"))
+                    .prioritySkills(root.path("prioritySkills").toString())
+                    .recommendedRoles(root.path("recommendedRoles").toString())
+                    .recommendedCertifications(root.path("recommendedCertifications").toString())
+                    .atsSuggestions(root.path("atsSuggestions").toString())
+                    .sectionAnalysis(root.path("sectionAnalysis").toString())
                     .rawAiResponse(aiJson)
                     .build();
 
@@ -207,14 +214,23 @@ public class ResumeProcessingService {
                 ),
                 new ResumeAnalysisResponse.AnalysisDto(
                         a.getSummary(),
+                        a.getResumeVerdict(),           // new
+                        a.getRecruiterPerspective(),    // new
+                        a.getDreamJobMatchSummary(),
+                        a.getInterviewReadiness(),
                         parseArray(a.getTechnicalSkills()),
                         parseArray(a.getStrengths()),
                         parseArray(a.getWeaknesses()),
                         parseArray(a.getMissingSkills()),
+                        parseArray(a.getPrioritySkills()),          // new
                         parseArray(a.getMissingKeywords()),
+                        parseArray(a.getAtsSuggestions()),          // new
                         parseArray(a.getImprovementSuggestions()),
                         parseArray(a.getProjectSuggestions()),
-                        parseArray(a.getRecommendedLearning())
+                        parseArray(a.getRecommendedLearning()),
+                        parseArray(a.getRecommendedRoles()),        // new
+                        parseArray(a.getRecommendedCertifications()),// new
+                        parseSectionAnalysis(a.getSectionAnalysis()) // new
                 ),
                 usageInfo
         );
@@ -240,5 +256,25 @@ public class ResumeProcessingService {
     private Long getCurrentUserId() {
         return Long.parseLong(SecurityContextHolder.getContext()
                 .getAuthentication().getName());
+    }
+
+    /**
+     * Parses sectionAnalysis JSON object into SectionAnalysisDto.
+     * sectionAnalysis is stored as JSON string in DB.
+     */
+    private ResumeAnalysisResponse.SectionAnalysisDto parseSectionAnalysis(String json) {
+        if (json == null) return new ResumeAnalysisResponse.SectionAnalysisDto();
+        try {
+            JsonNode node = objectMapper.readTree(json);
+            return new ResumeAnalysisResponse.SectionAnalysisDto(
+                    node.path("education").asText(""),
+                    node.path("skills").asText(""),
+                    node.path("projects").asText(""),
+                    node.path("experience").asText(""),
+                    node.path("certifications").asText("")
+            );
+        } catch (Exception ex) {
+            return new ResumeAnalysisResponse.SectionAnalysisDto();
+        }
     }
 }

@@ -155,6 +155,13 @@ public class ResumeGroqService {
                 13. interviewReadiness must be exactly one of: Beginner, Moderate, Job Ready
                 14. summary must be exactly 3 sentences
                 15. If you cannot follow this structure exactly, return {}
+                16. resumeVerdict must be one punchy sentence — like a label or badge
+                17. recruiterPerspective must be exactly 2 sentences — honest industry view
+                18. prioritySkills must contain exactly 3 items — ranked by impact
+                19. recommendedRoles must contain exactly 3 roles
+                20. recommendedCertifications must contain exactly 3 certifications
+                21. atsSuggestions must contain exactly 3 specific ATS fixes
+                22. sectionAnalysis must have all 5 sections — education, skills, projects, experience, certifications
                 """;
     }
 
@@ -256,7 +263,36 @@ public class ResumeGroqService {
                     "technology or concept 2 — why it matters",
                     "technology or concept 3 — why it matters",
                     "technology or concept 4 — why it matters"
-                  ]
+                  ],
+                  "resumeVerdict": "one punchy line summarizing overall resume quality — like a badge",
+                    "recruiterPerspective": "2 sentences — how a recruiter at a tech company would view this resume honestly",
+                    "prioritySkills": [
+                      "most important skill to learn first for dream job",
+                      "second priority",
+                      "third priority"
+                    ],
+                    "recommendedRoles": [
+                      "role that matches current resume strengths",
+                      "another realistic role",
+                      "stretch role closer to dream job"
+                    ],
+                    "recommendedCertifications": [
+                      "certification 1 relevant to dream job",
+                      "certification 2",
+                      "certification 3"
+                    ],
+                    "atsSuggestions": [
+                      "specific ATS fix 1",
+                      "specific ATS fix 2",
+                      "specific ATS fix 3"
+                    ],
+                    "sectionAnalysis": {
+                      "education": "one sentence honest assessment of education section",
+                      "skills": "one sentence assessment of skills section relevance and presentation",
+                      "projects": "one sentence assessment of project quality and relevance",
+                      "experience": "one sentence assessment of experience section or note if absent",
+                      "certifications": "one sentence — mentions certifications found or notes absence"
+                    }
                 }
                 
                 Scoring rules:

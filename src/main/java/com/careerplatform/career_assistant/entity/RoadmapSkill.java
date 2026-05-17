@@ -28,11 +28,11 @@ public class RoadmapSkill {
     private Integer estimatedDays;      // how long to learn this skill
 
     // what level user should reach for this skill
-//    @Enumerated(EnumType.STRING)
+    //@Enumerated(EnumType.STRING)
     private String targetLevel;
 
     // what level user starts at — from their profile
-//    @Enumerated(EnumType.STRING)
+    //@Enumerated(EnumType.STRING)
     private String startingLevel;
 
     // is skill already known by user at sufficient level
