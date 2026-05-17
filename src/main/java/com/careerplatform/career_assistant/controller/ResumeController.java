@@ -1,8 +1,7 @@
 package com.careerplatform.career_assistant.controller;
 
-import com.careerplatform.career_assistant.dto.request.ProfileAnalysisRequest;
-import com.careerplatform.career_assistant.dto.response.ResumeListResponse;
-import com.careerplatform.career_assistant.dto.response.ResumeUploadResponse;
+import com.careerplatform.career_assistant.dto.response.ResumeAnalysisResponse;
+import com.careerplatform.career_assistant.dto.response.ResumeListItemResponse;
 import com.careerplatform.career_assistant.service.ResumeProcessingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,47 +19,50 @@ public class ResumeController {
 
     private final ResumeProcessingService resumeProcessingService;
 
-    // POST /api/resume/upload
-    // multipart/form-data — file field name must be "file"
-    // requires JWT token in Authorization header
+    /**
+     * POST /api/resume/upload
+     * Upload and analyze resume.
+     * Checks monthly limit before processing.
+     * Returns full analysis + usage info.
+     */
     @PostMapping("/upload")
-    public ResponseEntity<ResumeUploadResponse> uploadResume(
+    public ResponseEntity<ResumeAnalysisResponse> uploadResume(
             @RequestParam("file") MultipartFile file) {
-        log.info("Resume upload request received: {}", file.getOriginalFilename());
+        log.info("Resume upload request: {}", file.getOriginalFilename());
         return ResponseEntity.ok(resumeProcessingService.uploadAndAnalyze(file));
     }
 
-    // POST /api/resume/analyze-from-profile
-    // for users with no resume — updates profile and triggers AI analysis
-    @PostMapping("/analyze-from-profile")
-    public ResponseEntity<ResumeUploadResponse> analyzeFromProfile(
-            @RequestBody ProfileAnalysisRequest request) {
-        log.info("Profile-based analysis request received");
-        return ResponseEntity.ok(resumeProcessingService.analyzeFromProfile(request));
-    }
-
-    // GET /api/resume/my-resumes
-    // returns all resumes for currently logged in user
+    /**
+     * GET /api/resume/my-resumes
+     * Returns lightweight list of all resumes for current user.
+     * Used for history/list view — no full analysis data.
+     */
     @GetMapping("/my-resumes")
-    public ResponseEntity<List<ResumeListResponse>> getMyResumes() {
-        log.info("Fetching resumes for current user");
+    public ResponseEntity<List<ResumeListItemResponse>> getMyResumes() {
+        log.info("Resume list request received");
         return ResponseEntity.ok(resumeProcessingService.getMyResumes());
     }
 
-    // GET /api/resume/{id}
-    // returns specific resume with full analysis
+    /**
+     * GET /api/resume/{id}
+     * Returns specific resume with full analysis.
+     * User can only access their own resumes.
+     */
     @GetMapping("/{id}")
-    public ResponseEntity<ResumeUploadResponse> getResume(@PathVariable Long id) {
-        log.info("Fetching resume with id: {}", id);
+    public ResponseEntity<ResumeAnalysisResponse> getResume(@PathVariable Long id) {
+        log.info("Resume fetch request for id: {}", id);
         return ResponseEntity.ok(resumeProcessingService.getResumeById(id));
     }
 
-    // DELETE /api/resume/{id}
-    // deletes resume from DB and file from disk
+    /**
+     * DELETE /api/resume/{id}
+     * Deletes resume and file from disk.
+     * User can only delete their own resumes.
+     */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteResume(@PathVariable Long id) {
-        log.info("Deleting resume with id: {}", id);
+        log.info("Resume delete request for id: {}", id);
         resumeProcessingService.deleteResume(id);
-        return ResponseEntity.noContent().build(); // 204
+        return ResponseEntity.noContent().build();
     }
 }

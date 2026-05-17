@@ -25,6 +25,11 @@ public class GenerationLimitService {
 
     private final UserRepository userRepository;
 
+    // limit type enum — internal use only
+    public enum LimitType {
+        ROADMAP, RESUME
+    }
+
     /**
      * Checks if user can generate a roadmap.
      * Resets counter if month has changed since last generation.
@@ -32,35 +37,52 @@ public class GenerationLimitService {
      * Call this BEFORE generating roadmap.
      */
     public void checkAndIncrement(User user) {
+        checkAndIncrement(user, LimitType.ROADMAP);
+    }
+    /**
+     * Checks and increments limit for given type.
+     * ROADMAP → checks roadmapsGeneratedThisMonth
+     * RESUME  → checks resumesAnalyzedThisMonth
+     */
+    public void checkAndIncrement(User user, LimitType type) {
         String currentMonth = YearMonth.now().format(MONTH_FORMAT);
 
-        // reset counter if new month
+        // reset roadmap counter if new month
         if (!currentMonth.equals(user.getCurrentMonthYear())) {
             log.info("New month detected — resetting roadmap counter for userId: {}", user.getId());
             user.setRoadmapsGeneratedThisMonth(0);
+            user.setResumesAnalyzedThisMonth(0);  // reset both on new month
             user.setCurrentMonthYear(currentMonth);
         }
 
-        int limit = getLimit(user.getPlan());
-
-        // check limit — PRO users have no limit
-        if (!"PRO".equals(user.getPlan()) &&
-                user.getRoadmapsGeneratedThisMonth() >= limit) {
-            log.warn("Roadmap limit reached for userId: {}", user.getId());
-            throw new RoadmapLimitExceededException(
-                    "You have used all " + limit + " roadmap generations for this month. " +
-                            "Upgrade to PRO for unlimited generations."
-            );
+        if (type == LimitType.RESUME) {
+            if (!"PRO".equals(user.getPlan()) &&
+                    user.getResumesAnalyzedThisMonth() >= freeLimit) {
+                log.warn("Resume limit reached for userId: {}", user.getId());
+                throw new RoadmapLimitExceededException(
+                        "You have used all " + freeLimit + " resume analyses for this month. " +
+                                "Upgrade to PRO for unlimited analyses."
+                );
+            }
+            // increment counter
+            user.setResumesAnalyzedThisMonth(user.getResumesAnalyzedThisMonth() + 1);
+        } else {
+            if (!"PRO".equals(user.getPlan()) &&
+                    user.getRoadmapsGeneratedThisMonth() >= freeLimit) {
+                log.warn("Roadmap limit reached for userId: {}", user.getId());
+                throw new RoadmapLimitExceededException(
+                        "You have used all " + freeLimit + " roadmap generations for this month. " +
+                                "Upgrade to PRO for unlimited generations."
+                );
+            }
+            // increment counter
+            user.setRoadmapsGeneratedThisMonth(user.getRoadmapsGeneratedThisMonth() + 1);
         }
 
-        // increment counter
-        user.setRoadmapsGeneratedThisMonth(
-                user.getRoadmapsGeneratedThisMonth() + 1
-        );
         userRepository.save(user);
-        log.info("Roadmap generation count incremented to {} for userId: {}",
-                user.getRoadmapsGeneratedThisMonth(), user.getId());
     }
+
+
 
     /**
      * Builds GenerationLimitResponse for a user.
@@ -93,6 +115,26 @@ public class GenerationLimitService {
                 used >= total
         );
     }
+
+    /**
+     * Builds limit response for resume analysis usage.
+     */
+    public GenerationLimitResponse buildResumeLimitResponse(User user) {
+        String currentMonth = YearMonth.now().format(MONTH_FORMAT);
+        int used = currentMonth.equals(user.getCurrentMonthYear())
+                ? user.getResumesAnalyzedThisMonth() : 0;
+        int total = getLimit(user.getPlan());
+
+        if ("PRO".equals(user.getPlan())) {
+            return new GenerationLimitResponse(used, -1, -1, "PRO",
+                    getFirstDayOfNextMonth(), false);
+        }
+
+        int remaining = Math.max(0, total - used);
+        return new GenerationLimitResponse(used, total, remaining,
+                user.getPlan(), getFirstDayOfNextMonth(), used >= total);
+    }
+
 
     // returns max generations based on plan
     private int getLimit(String plan) {

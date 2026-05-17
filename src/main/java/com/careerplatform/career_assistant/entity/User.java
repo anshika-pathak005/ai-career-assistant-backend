@@ -101,6 +101,10 @@ public class User {
     @Column(nullable = false)
     private Integer roadmapsGeneratedThisMonth = 0;
 
+    // add alongside roadmap generation tracking
+    @Column(nullable = false)
+    private Integer resumesAnalyzedThisMonth = 0;
+
     // tracks which month the counter belongs to — "2026-05"
 // when this changes → counter resets automatically
     @Column(nullable = false)
