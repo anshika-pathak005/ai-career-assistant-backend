@@ -47,6 +47,7 @@ public class AuthService {
                 .isProfileComplete(false)
                 .plan("FREE")
                 .roadmapsGeneratedThisMonth(0)
+                .resumesAnalyzedThisMonth(0)
                 .currentMonthYear("")
                 .build();
 

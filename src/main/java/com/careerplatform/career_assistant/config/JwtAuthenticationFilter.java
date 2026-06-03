@@ -32,6 +32,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
 
+        // skip JWT filter entirely for public endpoints
+        String path = request.getRequestURI();
+        if (path.startsWith("/api/auth/")) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         // get Authorization header from request
         // expected format: "Bearer eyJhbGciOiJIUzI1NiJ9..."
         String authHeader = request.getHeader("Authorization");
@@ -80,7 +87,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     log.info("Authentication set in SecurityContext for userId: {}", userId);
 
                 } else {
-                    log.warn("Invalid or expired JWT token");
+                    log.warn("Invalid or expired JWT token for userId: {}", userId);
+                    // return 401 immediately — then frontend refresh token logic triggers
+                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    response.setContentType("application/json");
+                    response.getWriter().write(
+                            "{\"status\": 401, \"message\": \"Token expired. Please refresh.\"}"
+                    );
+                    return; // stop filter chain
                 }
             }
 
@@ -88,6 +102,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             // token is malformed or tampered — log and continue without setting auth
             // Spring Security will block the request at SecurityFilterChain level
             log.error("JWT authentication failed: {}", ex.getMessage());
+            // return 401 on malformed/tampered token too
+            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+            response.setContentType("application/json");
+            response.getWriter().write(
+                    "{\"status\": 401, \"message\": \"Invalid token. Please login again.\"}"
+            );
+            return;
         }
 
         // continue the filter chain — request proceeds to controller

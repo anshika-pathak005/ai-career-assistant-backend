@@ -50,7 +50,8 @@ public class SecurityConfig {
                                 "/api/auth/register/step1",
                                 "/api/auth/register/step2/**",
                                 "/api/auth/login",
-                                "/api/auth/refresh"
+                                "/api/auth/refresh",
+                                "/api/auth/logout"
                         ).permitAll()
                         // everything else requires valid JWT
                         .anyRequest().authenticated()

@@ -250,7 +250,7 @@ public class RoadmapService {
                         int skillCompleted = (int) skill.getSteps().stream()
                                 .filter(s -> Boolean.TRUE.equals(s.getCompleted())
                                         || Boolean.TRUE.equals(s.getSkipped()))
-                                .count();
+                          .count();
 
                         phaseTotal += skillTotal;
                         phaseCompleted += skillCompleted;
