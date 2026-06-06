@@ -32,16 +32,20 @@ public class AuthService {
 
         log.info("Registering new user with email: {}", request.getEmail());
 
+        // normalize inputs before any processing
+        String normalizedEmail = request.getEmail().trim().toLowerCase();
+        String normalizedName = normalizeName(request.getName());
+
         // throw 409 if email already taken — caught by GlobalExceptionHandler
-        if (userRepository.existsByEmail(request.getEmail())) {
+        if (userRepository.existsByEmail(normalizedEmail)) {
             log.warn("Registration failed — email already registered: {}", request.getEmail());
             throw new DuplicateResourceException("Email already registered");
         }
 
         // Create a new User object using Builder pattern (avoids constructor order issues and improves readability)
         User user = User.builder()
-                .name(request.getName())
-                .email(request.getEmail())
+                .name(normalizedName)
+                .email(normalizedEmail)
                 .passwordHash(passwordEncoder.encode(request.getPassword()))
                 .wizardStep(1)
                 .isProfileComplete(false)
@@ -107,8 +111,10 @@ public class AuthService {
     public AuthResult login(LoginRequest request, String deviceInfo) {
         log.info("Login attempt for email: {}", request.getEmail());
 
+        String normalizedEmail = request.getEmail().trim().toLowerCase();
+
         // find user by email — throw 401 if not found
-        User user = userRepository.findByEmail(request.getEmail())
+        User user = userRepository.findByEmail(normalizedEmail)
                 .orElseThrow(() -> new InvalidCredentialsException("Invalid email or password"));
 
         // compare raw password with stored BCrypt hash
@@ -178,4 +184,26 @@ public class AuthService {
         refreshTokenService.deleteAllTokens(user);
         log.info("Logout successful for userId: {}", userId);
     }
+
+//helpers
+// capitalizes first letter of each word — "john doe" → "John Doe"
+private String normalizeName(String name) {
+    if (name == null || name.isBlank()) return name;
+
+    String trimmed = name.trim();
+    String[] words = trimmed.split("\\s+"); // split on multiple spaces
+
+    StringBuilder normalized = new StringBuilder();
+    for (String word : words) {
+        if (!word.isEmpty()) {
+            normalized.append(Character.toUpperCase(word.charAt(0)))
+                    .append(word.substring(1).toLowerCase())
+                    .append(" ");
+        }
+    }
+
+    return normalized.toString().trim();
 }
+
+}
+
