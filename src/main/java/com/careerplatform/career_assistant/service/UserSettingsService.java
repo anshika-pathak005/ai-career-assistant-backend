@@ -5,6 +5,7 @@ import com.careerplatform.career_assistant.entity.User;
 import com.careerplatform.career_assistant.exception.InvalidCredentialsException;
 import com.careerplatform.career_assistant.exception.ResourceNotFoundException;
 import com.careerplatform.career_assistant.repository.UserRepository;
+import com.careerplatform.career_assistant.repository.RefreshTokenRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -20,6 +21,7 @@ public class UserSettingsService {
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final RefreshTokenService refreshTokenService;
+    private final RefreshTokenRepository refreshTokenRepository;
 
     /**
      * Changes user password.
@@ -68,6 +70,8 @@ public class UserSettingsService {
             throw new InvalidCredentialsException("Password is incorrect");
         }
 
+        // delete refresh tokens first, then delete user
+        refreshTokenRepository.deleteByUserId(userId);
         userRepository.delete(user);
         log.info("Account deleted for userId: {}", userId);
     }
