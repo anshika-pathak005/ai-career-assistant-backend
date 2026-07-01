@@ -1,4 +1,4 @@
-# Career Assistant — Backend
+# CareerPilot— Backend
 
 The backend service for **Career Assistant**, a full-stack AI-powered career guidance platform that helps students and aspiring professionals plan and manage their career journey. This service exposes REST APIs for authentication, resume analysis, roadmap generation, and dashboard analytics.
 
