@@ -5,7 +5,10 @@ import lombok.*;
 
 // one step inside a skill
 // e.g. "Learn JSX and component basics"
-@Data
+// @Data removed (5.1) — identity equals/hashCode and no relations in toString().
+@Getter
+@Setter
+@ToString
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
@@ -19,6 +22,7 @@ public class SkillStep {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "skill_id", nullable = false)
+    @ToString.Exclude
     private RoadmapSkill skill;
 
     private String title;               // "Learn JSX basics"
@@ -34,5 +38,18 @@ public class SkillStep {
     protected void onCreate() {
         completed = false;
         skipped = false;
+    }
+
+    /** Identity-based equals/hashCode — see the note on User. */
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof SkillStep other)) return false;
+        return id != null && id.equals(other.getId());
+    }
+
+    @Override
+    public int hashCode() {
+        return getClass().hashCode();
     }
 }

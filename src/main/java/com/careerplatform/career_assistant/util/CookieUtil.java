@@ -1,69 +1,78 @@
 package com.careerplatform.career_assistant.util;
 
+import com.careerplatform.career_assistant.config.ApiPaths;
+import com.careerplatform.career_assistant.config.properties.AppProperties;
+import com.careerplatform.career_assistant.config.properties.JwtProperties;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.beans.factory.annotation.Value;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseCookie;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.Optional;
 
+/**
+ * Reads, sets and clears the refresh token cookie.
+ * The cookie is httpOnly, scoped to the auth endpoints only, and its Secure and SameSite
+ * attributes come from configuration.
+ *
+ * Setting and clearing both go through one builder, because a browser only replaces a
+ * cookie when the attributes match — building them separately is how logout silently
+ * stops clearing the cookie.
+ */
 @Component
+@RequiredArgsConstructor
 public class CookieUtil {
 
-    @Value("${jwt.refresh-expiration-days:7}")
-    private Long refreshExpirationDays;
-
-    // cookie name — defined once here, used everywhere
     public static final String REFRESH_TOKEN_COOKIE = "refreshToken";
 
     /**
-     * Sets refresh token as httpOnly cookie in the response.
-     * Browser stores it automatically — JS cannot access it.
+     * Narrow on purpose: the token is never sent to non-auth endpoints.
+     *
+     * 6.8: this moved with the rest of the API under /api/v1, so it is derived from
+     * ApiPaths rather than written out again. A cookie set at one path is not sent to
+     * another, so a mismatch here does not fail loudly - it just means refresh stops
+     * working and every session silently dies at the access token's expiry.
      */
+    private static final String COOKIE_PATH = ApiPaths.AUTH;
+
+    private final JwtProperties jwtProperties;
+    private final AppProperties appProperties;
+
+    /** Sets the refresh token cookie on the response. */
     public void setRefreshTokenCookie(HttpServletResponse response, String refreshToken) {
-        Cookie cookie = new Cookie(REFRESH_TOKEN_COOKIE, refreshToken);
-
-        cookie.setHttpOnly(true);                                    // JS cannot access
-        cookie.setSecure(false);                                     // set true in production (HTTPS only)
-        cookie.setPath("/api/auth");                                 // cookie only sent to /api/auth endpoints
-        cookie.setMaxAge((int) (refreshExpirationDays * 24 * 60 * 60)); // 7 days in seconds
-
-        // SameSite=Strict — cookie only sent to same domain, prevents CSRF
-        // Spring doesn't have direct SameSite support in Cookie class, set via header
-        response.addCookie(cookie);
-        response.addHeader("Set-Cookie",
-                String.format("%s=%s; HttpOnly; SameSite=Strict; Path=/api/auth; Max-Age=%d",
-                        REFRESH_TOKEN_COOKIE,
-                        refreshToken,
-                        (int) (refreshExpirationDays * 24 * 60 * 60)
-                )
-        );
+        response.addHeader(HttpHeaders.SET_COOKIE,
+                build(refreshToken, Duration.ofDays(jwtProperties.refreshExpirationDays())).toString());
     }
 
-    /**
-     * Reads refresh token from incoming request cookies.
-     * Browser sends it automatically — we just extract it here.
-     */
+    /** Clears the refresh token cookie, using the same attributes it was set with. */
+    public void clearRefreshTokenCookie(HttpServletResponse response) {
+        response.addHeader(HttpHeaders.SET_COOKIE, build("", Duration.ZERO).toString());
+    }
+
+    /** Reads the refresh token the browser sent, if any. */
     public Optional<String> getRefreshTokenFromCookie(HttpServletRequest request) {
         if (request.getCookies() == null) return Optional.empty();
 
         return Arrays.stream(request.getCookies())
                 .filter(cookie -> REFRESH_TOKEN_COOKIE.equals(cookie.getName()))
                 .map(Cookie::getValue)
+                .filter(value -> value != null && !value.isBlank())
                 .findFirst();
     }
 
-    /**
-     * Clears the refresh token cookie.
-     * Called on logout — sets maxAge to 0, browser deletes it immediately.
-     */
-    public void clearRefreshTokenCookie(HttpServletResponse response) {
-        Cookie cookie = new Cookie(REFRESH_TOKEN_COOKIE, "");
-        cookie.setHttpOnly(true);
-        cookie.setPath("/api/auth");
-        cookie.setMaxAge(0); // 0 = delete immediately
-        response.addCookie(cookie);
+    /** Single definition of the cookie's attributes, used by both set and clear. */
+    private ResponseCookie build(String value, Duration maxAge) {
+        return ResponseCookie.from(REFRESH_TOKEN_COOKIE, value)
+                .httpOnly(true)
+                .secure(appProperties.cookie().secure())
+                .sameSite(appProperties.cookie().sameSite())
+                .path(COOKIE_PATH)
+                .maxAge(maxAge)
+                .build();
     }
 }

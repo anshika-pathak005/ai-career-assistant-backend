@@ -2,148 +2,182 @@ package com.careerplatform.career_assistant.service;
 
 import com.careerplatform.career_assistant.dto.response.GenerationLimitResponse;
 import com.careerplatform.career_assistant.entity.User;
+import com.careerplatform.career_assistant.enums.Plan;
 import com.careerplatform.career_assistant.exception.RoadmapLimitExceededException;
 import com.careerplatform.career_assistant.repository.UserRepository;
+import com.careerplatform.career_assistant.config.properties.AppProperties;
+import com.careerplatform.career_assistant.observability.AppMetrics;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDate;
 import java.time.YearMonth;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 
+/**
+ * Manages the monthly generation quota for roadmaps and resume analyses.
+ *
+ * Quota is consumed before the AI call, so parallel requests cannot all slip past the
+ * limit, and refunded if that call fails.
+ * The counter resets on the 1st of each month in the configured timezone.
+ * FREE plans get a fixed limit; PRO is unlimited but still counted, so usage reporting
+ * stays accurate.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class GenerationLimitService {
 
-    @Value("${app.generation.free-limit}")
-    private int freeLimit;
-    private static final DateTimeFormatter MONTH_FORMAT =
-            DateTimeFormatter.ofPattern("yyyy-MM");
+    private static final DateTimeFormatter MONTH_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM");
 
     private final UserRepository userRepository;
 
-    // limit type enum — internal use only
+    /**
+     * 6.4: free-limit and reset-zone were two @Value fields. reset-zone in particular was a
+     * String fed to ZoneId.of() on every quota check, so a typo in the property turned
+     * into a 500 on the first generation of the month rather than a startup failure.
+     * AppProperties binds it as a ZoneId, which means an invalid zone cannot boot.
+     */
+    private final AppProperties appProperties;
+
+    /** 7.2: how often users run out of quota - see the counter at the rejection below. */
+    private final AppMetrics metrics;
+
+    /** The FREE plan's monthly allowance. Read through AppProperties, not injected raw. */
+    private int freeLimit() {
+        return appProperties.generation().freeLimit();
+    }
+
+    /** Timezone the monthly counter resets in. Bound as a ZoneId, so it cannot be invalid. */
+    private ZoneId resetZone() {
+        return appProperties.generation().resetZone();
+    }
+
     public enum LimitType {
         ROADMAP, RESUME
     }
 
     /**
-     * Checks if user can generate a roadmap.
-     * Resets counter if month has changed since last generation.
-     * Throws RoadmapLimitExceededException if limit reached.
-     * Call this BEFORE generating roadmap.
+     * Consumes one unit of quota for the user, or throws if they are out.
+     * The check and the increment happen as one conditional UPDATE, so two concurrent
+     * requests cannot both pass the same limit.
+     *
+     * Takes a userId rather than a User so there is no count to read off an entity and
+     * race against.
+     *
+     * Must run inside the caller's transaction, so a rollback also rolls back the
+     * consumption — that is why there is no REQUIRES_NEW here.
      */
-    public void checkAndIncrement(User user) {
-        checkAndIncrement(user, LimitType.ROADMAP);
-    }
-    /**
-     * Checks and increments limit for given type.
-     * ROADMAP → checks roadmapsGeneratedThisMonth
-     * RESUME  → checks resumesAnalyzedThisMonth
-     */
-    public void checkAndIncrement(User user, LimitType type) {
-        String currentMonth = YearMonth.now().format(MONTH_FORMAT);
+    public void consume(Long userId, LimitType type) {
+        String month = currentMonth();
 
-        // reset roadmap counter if new month
-        if (!currentMonth.equals(user.getCurrentMonthYear())) {
-            log.info("New month detected — resetting roadmap counter for userId: {}", user.getId());
-            user.setRoadmapsGeneratedThisMonth(0);
-            user.setResumesAnalyzedThisMonth(0);  // reset both on new month
-            user.setCurrentMonthYear(currentMonth);
+        int rowsUpdated = (type == LimitType.RESUME)
+                ? userRepository.tryConsumeResumeQuota(userId, month, freeLimit())
+                : userRepository.tryConsumeRoadmapQuota(userId, month, freeLimit());
+
+        // Zero rows means the WHERE clause rejected it, which can only be the limit
+        // condition — the id is known to exist because the caller just loaded it.
+        if (rowsUpdated == 0) {
+            log.warn("{} limit reached for userId: {}", type, userId);
+            /*
+             * 7.2: plan is hardcoded FREE rather than read from the user, and that is
+             * accurate rather than lazy - the UPDATE's WHERE clause exempts PRO, so a
+             * PRO user can never reach this branch. Loading the row to tag it would be
+             * an extra query to learn something the code already guarantees.
+             *
+             * This counter answers "is the free limit set sensibly". A number that
+             * climbs steadily is a pricing signal; one that spikes is usually a client
+             * retrying a failed generation in a loop.
+             */
+            metrics.quotaRejected("FREE", type.name());
+            throw new RoadmapLimitExceededException(buildLimitMessage(type));
         }
-
-        if (type == LimitType.RESUME) {
-            if (!"PRO".equals(user.getPlan()) &&
-                    user.getResumesAnalyzedThisMonth() >= freeLimit) {
-                log.warn("Resume limit reached for userId: {}", user.getId());
-                throw new RoadmapLimitExceededException(
-                        "You have used all " + freeLimit + " resume analyses for this month. " +
-                                "Upgrade to PRO for unlimited analyses."
-                );
-            }
-            // increment counter
-            user.setResumesAnalyzedThisMonth(user.getResumesAnalyzedThisMonth() + 1);
-        } else {
-            if (!"PRO".equals(user.getPlan()) &&
-                    user.getRoadmapsGeneratedThisMonth() >= freeLimit) {
-                log.warn("Roadmap limit reached for userId: {}", user.getId());
-                throw new RoadmapLimitExceededException(
-                        "You have used all " + freeLimit + " roadmap generations for this month. " +
-                                "Upgrade to PRO for unlimited generations."
-                );
-            }
-            // increment counter
-            user.setRoadmapsGeneratedThisMonth(user.getRoadmapsGeneratedThisMonth() + 1);
-        }
-
-        userRepository.save(user);
     }
 
+    /**
+     * Refunds one unit of quota after a failed generation.
+     *
+     * REQUIRES_NEW so it still commits while the caller is unwinding an exception — the
+     * caller's transaction is already marked for rollback by that point, and a refund
+     * written into it would be discarded along with everything else.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public void release(Long userId, LimitType type) {
+        String month = currentMonth();
 
+        int rowsUpdated = (type == LimitType.RESUME)
+                ? userRepository.releaseResumeQuota(userId, month)
+                : userRepository.releaseRoadmapQuota(userId, month);
+
+        if (rowsUpdated > 0) {
+            log.info("Released one {} quota unit for userId: {} after a failed generation",
+                    type, userId);
+        }
+    }
 
     /**
-     * Builds GenerationLimitResponse for a user.
-     * Called after generation and on GET /api/user/usage.
-     * Always reflects current state after any counter updates.
+     * Builds the roadmap usage response.
+     * Called after generation and on GET /api/v1/user/usage.
      */
     public GenerationLimitResponse buildLimitResponse(User user) {
-        String currentMonth = YearMonth.now().format(MONTH_FORMAT);
+        return buildResponse(user, usedThisMonth(user, LimitType.ROADMAP));
+    }
 
-        // if month changed and user hasn't generated yet — show 0 used
-        int used = currentMonth.equals(user.getCurrentMonthYear())
-                ? user.getRoadmapsGeneratedThisMonth() : 0;
+    /** Builds the resume analysis usage response. */
+    public GenerationLimitResponse buildResumeLimitResponse(User user) {
+        return buildResponse(user, usedThisMonth(user, LimitType.RESUME));
+    }
 
-        int total = getLimit(user.getPlan());
+    // ---------------------------------------------------------------- helpers
 
-        // PRO users — show unlimited
-        if ("PRO".equals(user.getPlan())) {
-            return new GenerationLimitResponse(
-                    used, -1, -1, "PRO",
-                    getFirstDayOfNextMonth(), false
-            );
+    /** Assembles the usage response; PRO shows -1 for total and remaining. */
+    private GenerationLimitResponse buildResponse(User user, int used) {
+        // 5.3: was "PRO".equals(user.getPlan()) against a String field. Now a reference
+        // comparison the compiler checks — a typo is a build error, not a silent denial.
+        if (user.getPlan() == Plan.PRO) {
+            return new GenerationLimitResponse(used, -1, -1, Plan.PRO.name(),
+                    firstDayOfNextMonth(), false);
         }
 
-        int remaining = Math.max(0, total - used);
-
-        return new GenerationLimitResponse(
-                used, total, remaining,
-                user.getPlan(),
-                getFirstDayOfNextMonth(),
-                used >= total
-        );
+        int remaining = Math.max(0, freeLimit() - used);
+        // .name() keeps the JSON wire format identical to before: "FREE" / "PRO".
+        return new GenerationLimitResponse(used, freeLimit(), remaining,
+                user.getPlan().name(), firstDayOfNextMonth(), used >= freeLimit());
     }
 
     /**
-     * Builds limit response for resume analysis usage.
+     * Reads the stored counter, but only if it belongs to the current month.
+     * The counter is reset lazily by the next consume, so between the 1st and a user's
+     * first generation the row still holds last month's number.
      */
-    public GenerationLimitResponse buildResumeLimitResponse(User user) {
-        String currentMonth = YearMonth.now().format(MONTH_FORMAT);
-        int used = currentMonth.equals(user.getCurrentMonthYear())
-                ? user.getResumesAnalyzedThisMonth() : 0;
-        int total = getLimit(user.getPlan());
-
-        if ("PRO".equals(user.getPlan())) {
-            return new GenerationLimitResponse(used, -1, -1, "PRO",
-                    getFirstDayOfNextMonth(), false);
+    private int usedThisMonth(User user, LimitType type) {
+        if (!currentMonth().equals(user.getCurrentMonthYear())) {
+            return 0;
         }
-
-        int remaining = Math.max(0, total - used);
-        return new GenerationLimitResponse(used, total, remaining,
-                user.getPlan(), getFirstDayOfNextMonth(), used >= total);
+        Integer used = (type == LimitType.RESUME)
+                ? user.getResumesAnalyzedThisMonth()
+                : user.getRoadmapsGeneratedThisMonth();
+        return used != null ? used : 0;
     }
 
-
-    // returns max generations based on plan
-    private int getLimit(String plan) {
-        return "PRO".equals(plan) ? Integer.MAX_VALUE : freeLimit;
+    private String buildLimitMessage(LimitType type) {
+        String noun = (type == LimitType.RESUME) ? "resume analyses" : "roadmap generations";
+        return "You have used all " + freeLimit() + " " + noun + " for this month. "
+                + "Upgrade to PRO for unlimited access.";
     }
 
-    // returns "2026-06-01" — when counter resets
-    private String getFirstDayOfNextMonth() {
-        return YearMonth.now().plusMonths(1)
+    /** Current month as "yyyy-MM" in the configured reset timezone. */
+    private String currentMonth() {
+        return YearMonth.now(resetZone()).format(MONTH_FORMAT);
+    }
+
+    /** When the counter resets, e.g. "2026-10-01". */
+    private String firstDayOfNextMonth() {
+        return YearMonth.now(resetZone())
+                .plusMonths(1)
                 .atDay(1)
                 .format(DateTimeFormatter.ISO_LOCAL_DATE);
     }

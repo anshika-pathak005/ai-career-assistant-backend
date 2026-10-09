@@ -8,8 +8,8 @@ import com.careerplatform.career_assistant.exception.ResourceNotFoundException;
 import com.careerplatform.career_assistant.repository.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
@@ -34,8 +34,10 @@ public class DashboardService {
      * Single call — frontend gets everything needed for dashboard.
      * All sections are null-safe — works even for brand new users.
      */
-    public DashboardResponse getDashboard() {
-        Long userId = getCurrentUserId();
+    // One transaction for the whole method, so the lazy roadmap tree resolves
+    // inside an open session. readOnly = true: no dirty-checking, no flush.
+    @Transactional(readOnly = true)
+    public DashboardResponse getDashboard(Long userId) {
         log.info("Dashboard request for userId: {}", userId);
 
         User user = userRepository.findById(userId)
@@ -61,7 +63,7 @@ public class DashboardService {
                 user.getName(),
                 user.getEmail(),
                 user.getDreamJob(),
-                user.getPlan()
+                user.getPlan().name()   // 5.3: enum -> wire format unchanged ("FREE"/"PRO")
         );
     }
 
@@ -266,8 +268,4 @@ public class DashboardService {
         );
     }
 
-    private Long getCurrentUserId() {
-        return Long.parseLong(SecurityContextHolder.getContext()
-                .getAuthentication().getName());
-    }
 }

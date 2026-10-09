@@ -18,4 +18,18 @@ public interface CareerRoadmapRepository extends JpaRepository<CareerRoadmap, Lo
 
     // check if user has an active roadmap
     boolean existsByUserAndStatus(User user, RoadmapStatus status);
+
+    /**
+     * SECURITY: ownership-scoped lookup. Prefer this over findById() + a manual
+     * owner check so the constraint cannot be forgotten at the call site.
+     */
+    Optional<CareerRoadmap> findByIdAndUserId(Long id, Long userId);
+
+    /**
+     * 5.4 — account deletion. Deliberately returns entities rather than issuing a bulk
+     * DELETE: the phase -> skill -> step tree is removed by CascadeType.ALL +
+     * orphanRemoval, and a bulk JPQL DELETE bypasses cascading entirely, leaving
+     * orphaned phases behind with a dangling roadmap_id.
+     */
+    List<CareerRoadmap> findByUserId(Long userId);
 }

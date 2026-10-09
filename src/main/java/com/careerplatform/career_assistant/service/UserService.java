@@ -11,12 +11,13 @@ import com.careerplatform.career_assistant.repository.AnalysisResultRepository;
 import com.careerplatform.career_assistant.repository.CareerRoadmapRepository;
 import com.careerplatform.career_assistant.repository.ResumeRepository;
 import com.careerplatform.career_assistant.repository.UserRepository;
+import com.careerplatform.career_assistant.config.properties.AppProperties;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
 import java.util.List;
@@ -26,6 +27,15 @@ import java.util.List;
 @RequiredArgsConstructor
 public class UserService {
 
+    /*
+     * 6.1: userId is a parameter now, resolved once in the controller by
+     * @CurrentUserId. It used to come from a private getCurrentUserId() copy-pasted into
+     * this and four other services, which parsed it out of the SecurityContext principal
+     * name - NPE when unauthenticated, NumberFormatException if the principal was not
+     * numeric, both surfacing as 500s. Taking it as an argument also means these methods
+     * can be unit tested without a SecurityContext.
+     */
+
     private final UserRepository userRepository;
     private final ObjectMapper objectMapper;
     private final GenerationLimitService generationLimitService;
@@ -33,14 +43,19 @@ public class UserService {
     private final ResumeRepository resumeRepository;
     private final AnalysisResultRepository analysisResultRepository;
 
+    /** 7.1: only for turning a pending deletion timestamp into the date it executes. */
+    private final AppProperties appProperties;
+
     /**
      * Fetches complete profile of currently logged in user.
      * userId extracted from Spring SecurityContext — set by JwtAuthenticationFilter.
      * Returns all fields including new roadmap preference fields.
      * Used to pre-fill roadmap generation form on frontend.
      */
-    public UserProfileResponse getUserProfile() {
-        Long userId = getCurrentUserId();
+    // One transaction for the whole method, so the lazy roadmap tree resolves
+    // inside an open session. readOnly = true: no dirty-checking, no flush.
+    @Transactional(readOnly = true)
+    public UserProfileResponse getUserProfile(Long userId) {
         log.info("Fetching profile for userId: {}", userId);
 
         User user = userRepository.findById(userId)
@@ -56,8 +71,9 @@ public class UserService {
      * skillLevels Map is converted to JSON string before saving.
      * Does not trigger roadmap generation — pure profile update.
      */
-    public UserProfileResponse updateProfile(UpdateProfileRequest request) {
-        Long userId = getCurrentUserId();
+    // Writes, then calls mapToResponse() which walks the roadmap tree. Not readOnly.
+    @Transactional
+    public UserProfileResponse updateProfile(Long userId, UpdateProfileRequest request) {
         log.info("Updating profile for userId: {}", userId);
 
         User user = userRepository.findById(userId)
@@ -95,8 +111,7 @@ public class UserService {
      * Ensures DB always has latest data user submitted in roadmap form.
      * Returns updated User entity — passed directly to AI prompt builder.
      */
-    public User saveRoadmapFormData(RoadmapGenerationRequest request) {
-        Long userId = getCurrentUserId();
+    public User saveRoadmapFormData(Long userId, RoadmapGenerationRequest request) {
         log.info("Saving roadmap form data for userId: {}", userId);
 
         User user = userRepository.findById(userId)
@@ -200,27 +215,16 @@ public class UserService {
                 generationLimitService.buildLimitResponse(user),      // roadmap usage
                 generationLimitService.buildResumeLimitResponse(user), // resume usage
                 roadmapSummary,
-                resumeSummary
+                resumeSummary,
+                appProperties.account().purgeTimeFor(user.getDeletionRequestedAt())
         );
-    }
-
-    /**
-     * Extracts userId of currently logged in user from Spring SecurityContext.
-     * SecurityContext is populated by JwtAuthenticationFilter on every request.
-     * Returns Long userId — used to fetch user from DB.
-     */
-
-    private Long getCurrentUserId() {
-        return Long.parseLong(SecurityContextHolder.getContext()
-                .getAuthentication().getName());
     }
 
     /**
      * Returns current generation usage for logged in user.
      * Used by dashboard to show "2/3 roadmaps used this month".
      */
-    public GenerationLimitResponse getUsage() {
-        Long userId = getCurrentUserId();
+    public GenerationLimitResponse getUsage(Long userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
         return generationLimitService.buildLimitResponse(user);

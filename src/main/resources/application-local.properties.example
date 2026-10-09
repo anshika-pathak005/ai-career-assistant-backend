@@ -1,0 +1,54 @@
+# ============================================================================
+# COPY THIS TO application-local.properties AND FILL IT IN
+#
+#     cp application-local.properties.example application-local.properties
+#
+# ============================================================================
+
+# ---------------------------------------------------------------- database
+spring.datasource.url=jdbc:mysql://localhost:3306/career_assistant?useSSL=false&serverTimezone=UTC
+spring.datasource.username=root
+spring.datasource.password=CHANGE_ME
+spring.datasource.driver-class-name=com.mysql.cj.jdbc.Driver
+
+# Local only. The base profile sets `validate`; this is the one place `update` is allowed,
+# and it is why there is a separate local profile at all.
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.show-sql=false
+
+# ---------------------------------------------------------------- secrets
+# At least 32 BYTES for HS256 - JwtUtil checks bytes, the property constraint checks
+# characters, and they disagree for non-ASCII. Generate one with:
+#     openssl rand -base64 48
+jwt.secret=CHANGE_ME_AT_LEAST_32_CHARACTERS_LONG_SECRET
+jwt.expiration=3600000
+
+# Two separate Groq accounts on purpose - exhausting one provider-side limit must not
+# take the other down. Using one key for both works but removes that isolation.
+groq.api.key=CHANGE_ME
+groq.api.url=https://api.groq.com/openai/v1/chat/completions
+groq.api.model=llama-3.3-70b-versatile
+groq.resume.api.key=CHANGE_ME
+groq.resume.api.url=https://api.groq.com/openai/v1/chat/completions
+groq.resume.api.model=llama-3.3-70b-versatile
+
+# ---------------------------------------------------------------- app
+# Absolute path. Must exist and be writable, or the uploadDirectory health indicator
+# reports DOWN at /actuator/health.
+file.upload-dir=/absolute/path/to/uploads
+app.generation.free-limit=3
+app.cors.allowed-origins=http://localhost:3000,http://localhost:5173
+
+# FALSE for local http. A Secure cookie is not stored by the browser over plain http, so
+# leaving this true makes login return 200 and every refresh return 401 - which looks
+# like a token bug and is not one.
+app.cookie.secure=false
+
+# Minutes rather than days, so the deletion flow can be tested in one sitting.
+app.account.deletion-grace-period=2m
+
+# ---------------------------------------------------------------- actuator
+# Locally it is convenient to have actuator on the app port. NEVER do this in a deployed
+# profile - the management endpoints are not behind the security filter chain.
+management.server.port=8080
+management.endpoint.health.show-details=always

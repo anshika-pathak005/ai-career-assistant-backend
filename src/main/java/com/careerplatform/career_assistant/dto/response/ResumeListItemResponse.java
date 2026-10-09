@@ -5,7 +5,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
-// used in GET /api/resume/my-resumes
+// used in GET /api/v1/resume/my-resumes
 // lightweight — no full analysis, just summary for list view
 @Data
 @AllArgsConstructor

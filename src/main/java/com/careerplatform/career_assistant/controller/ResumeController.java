@@ -2,6 +2,9 @@ package com.careerplatform.career_assistant.controller;
 
 import com.careerplatform.career_assistant.dto.response.ResumeAnalysisResponse;
 import com.careerplatform.career_assistant.dto.response.ResumeListItemResponse;
+import com.careerplatform.career_assistant.ratelimit.RateLimit;
+import com.careerplatform.career_assistant.ratelimit.RateLimitTier;
+import com.careerplatform.career_assistant.security.CurrentUserId;
 import com.careerplatform.career_assistant.service.ResumeProcessingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -13,56 +16,68 @@ import java.util.List;
 
 @Slf4j
 @RestController
-@RequestMapping("/api/resume")
+@RequestMapping("/resume")
 @RequiredArgsConstructor
 public class ResumeController {
 
     private final ResumeProcessingService resumeProcessingService;
 
     /**
-     * POST /api/resume/upload
-     * Upload and analyze resume.
-     * Checks monthly limit before processing.
-     * Returns full analysis + usage info.
+     * POST /api/v1/resume/upload
+     * Uploads and analyses a resume. Consumes monthly quota before processing.
      */
+    // Tika extraction plus a Groq call at ~2500 max tokens.
+    @RateLimit(tier = RateLimitTier.AI, cost = 3)
     @PostMapping("/upload")
     public ResponseEntity<ResumeAnalysisResponse> uploadResume(
+            @CurrentUserId Long userId,
             @RequestParam("file") MultipartFile file) {
-        log.info("Resume upload request: {}", file.getOriginalFilename());
-        return ResponseEntity.ok(resumeProcessingService.uploadAndAnalyze(file));
+
+        /*
+         * 6.7: this logged file.getOriginalFilename(). Resume filenames are routinely
+         * "Firstname_Lastname_Resume.pdf", which put the user's real name into the
+         * application log on every upload - and therefore into the log aggregator, which
+         * is a lower-trust store than the database. Size and declared type are what an
+         * operator debugging an upload actually needs.
+         */
+        log.info("Resume upload for userId: {} ({} bytes, type {})",
+                userId, file.getSize(), file.getContentType());
+
+        return ResponseEntity.ok(resumeProcessingService.uploadAndAnalyze(userId, file));
     }
 
     /**
-     * GET /api/resume/my-resumes
-     * Returns lightweight list of all resumes for current user.
-     * Used for history/list view — no full analysis data.
+     * GET /api/v1/resume/my-resumes
+     * Lightweight list for the history view — no full analysis data.
      */
     @GetMapping("/my-resumes")
-    public ResponseEntity<List<ResumeListItemResponse>> getMyResumes() {
-        log.info("Resume list request received");
-        return ResponseEntity.ok(resumeProcessingService.getMyResumes());
+    public ResponseEntity<List<ResumeListItemResponse>> getMyResumes(@CurrentUserId Long userId) {
+        log.info("Resume list request for userId: {}", userId);
+        return ResponseEntity.ok(resumeProcessingService.getMyResumes(userId));
     }
 
     /**
-     * GET /api/resume/{id}
-     * Returns specific resume with full analysis.
-     * User can only access their own resumes.
+     * GET /api/v1/resume/{id}
+     * Full analysis for one resume. Ownership is enforced in the query.
      */
     @GetMapping("/{id}")
-    public ResponseEntity<ResumeAnalysisResponse> getResume(@PathVariable Long id) {
-        log.info("Resume fetch request for id: {}", id);
-        return ResponseEntity.ok(resumeProcessingService.getResumeById(id));
+    public ResponseEntity<ResumeAnalysisResponse> getResume(
+            @CurrentUserId Long userId,
+            @PathVariable Long id) {
+        log.info("Resume fetch request for id: {} by userId: {}", id, userId);
+        return ResponseEntity.ok(resumeProcessingService.getResumeById(userId, id));
     }
 
     /**
-     * DELETE /api/resume/{id}
-     * Deletes resume and file from disk.
-     * User can only delete their own resumes.
+     * DELETE /api/v1/resume/{id}
+     * Deletes the row and the file on disk. Ownership is enforced in the query.
      */
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteResume(@PathVariable Long id) {
-        log.info("Resume delete request for id: {}", id);
-        resumeProcessingService.deleteResume(id);
+    public ResponseEntity<Void> deleteResume(
+            @CurrentUserId Long userId,
+            @PathVariable Long id) {
+        log.info("Resume delete request for id: {} by userId: {}", id, userId);
+        resumeProcessingService.deleteResume(userId, id);
         return ResponseEntity.noContent().build();
     }
 }

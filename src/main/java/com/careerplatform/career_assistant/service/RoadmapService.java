@@ -10,11 +10,13 @@ import com.careerplatform.career_assistant.exception.ResourceNotFoundException;
 import com.careerplatform.career_assistant.repository.*;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.careerplatform.career_assistant.config.CacheConfig;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.Cacheable;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -32,60 +34,92 @@ public class RoadmapService {
     private final ObjectMapper objectMapper;
     private final SkillStepRepository skillStepRepository;
     private final GenerationLimitService generationLimitService;
+    private final TransactionTemplate transactionTemplate;
 
     /**
      * Main roadmap generation method.
      * Flow:
-     *   1. Save form data to user profile
-     *   2. Archive existing active roadmap if any
-     *   3. Call AI with full user context
-     *   4. Parse AI response into entities
-     *   5. Save roadmap + phases + skills + steps to DB
-     *   6. Return complete roadmap response
+     *   1. Save form data to user profile, consume quota, archive old roadmap  [TX 1]
+     *   2. Call AI with full user context                                      [no TX]
+     *   3. Parse AI response and save the roadmap tree                         [TX 2]
+     *
+     * NOT @Transactional — deliberately.
+     *
+     * A Spring transaction holds a JDBC connection for its whole duration, and the Groq
+     * call can take up to a minute. With HikariCP's default pool of 10, wrapping this
+     * method would let ten concurrent generations hold every connection in the pool and
+     * block every other request in the app — login, dashboard, health check — behind
+     * connection acquisition.
+     *
+     * So the slow call sits between two short transactions, and a connection is only
+     * held while the database is actually being used.
+     *
+     * TransactionTemplate rather than private @Transactional methods, because Spring
+     * proxies the bean: a self-invoked method never passes through the proxy, so its
+     * @Transactional would be silently ignored.
+     *
+     * The HTTP thread is still parked for the duration — making this asynchronous is
+     * what fixes that.
      */
-    @Transactional
-    public GenerateRoadmapResponse generateRoadmap(RoadmapGenerationRequest request) {
-        Long userId = getCurrentUserId();
+    public GenerateRoadmapResponse generateRoadmap(Long userId, RoadmapGenerationRequest request) {
         log.info("Roadmap generation started for userId: {}", userId);
 
-        // step 1 — save form data to user profile
-        User user = userService.saveRoadmapFormData(request);
+        // ── TX 1: short, DB only ──────────────────────────────────────────────
+        // Save form data, consume quota, archive the previous roadmap.
+        // Quota is consumed here rather than after the AI call so that parallel
+        // requests cannot all slip past the limit check.
+        User user = transactionTemplate.execute(status -> {
+            // Quota first, for two reasons. consume() runs a bulk UPDATE with
+            // clearAutomatically, which detaches everything already in the persistence
+            // context; and there is no point writing form data for a request that is
+            // about to be rejected.
+            generationLimitService.consume(userId, GenerationLimitService.LimitType.ROADMAP);
 
-        // check limit BEFORE generating — throws 429 if exceeded
-        generationLimitService.checkAndIncrement(user);
+            User u = userService.saveRoadmapFormData(userId, request);
+            archiveExistingRoadmap(u);
+            return u;
+        });
 
-        // step 2 — archive existing active roadmap if exists
-        archiveExistingRoadmap(user);
-
-        // step 3 — call AI
-        String aiResponse = groqService.generateRoadmap(user, request);
+        // ── No transaction: the slow part ─────────────────────────────────────
+        // `user` is detached here. Everything the prompt reads (dreamJob,
+        // userCategory, currentRole, industries) is a basic column or a JSON
+        // column, not a lazy association, so this does not need an open session.
+        String aiResponse;
+        try {
+            aiResponse = groqService.generateRoadmap(user, request);
+        } catch (RuntimeException ex) {
+            // The AI call failed after quota was already consumed. Refund it —
+            // the user should not be charged for a generation they never got.
+            generationLimitService.release(userId, GenerationLimitService.LimitType.ROADMAP);
+            throw ex;
+        }
         log.info("AI roadmap response received for userId: {}", userId);
 
-        // step 4 + 5 — parse and save
-        CareerRoadmap roadmap = parseAndSaveRoadmap(user, request, aiResponse);
-        log.info("Roadmap saved with id: {}", roadmap.getId());
+        // ── TX 2: short, DB only ──────────────────────────────────────────────
+        // Parse the response and persist the roadmap tree.
+        return transactionTemplate.execute(status -> {
+            User fresh = userRepository.findById(userId)
+                    .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
-        // refresh user from DB — counter was updated in checkAndIncrement
-        user = userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+            CareerRoadmap roadmap = parseAndSaveRoadmap(fresh, request, aiResponse);
+            log.info("Roadmap saved with id: {}", roadmap.getId());
 
-        log.info("Roadmap generated successfully for userId: {}", userId);
-
-
-        // step 6 — build and return response
-        return new GenerateRoadmapResponse(
-                roadmap.getId(),
-                "Roadmap generated successfully",
-                generationLimitService.buildLimitResponse(user) // include usage info
-        );
+            return new GenerateRoadmapResponse(
+                    roadmap.getId(),
+                    "Roadmap generated successfully",
+                    generationLimitService.buildLimitResponse(fresh) // include usage info
+            );
+        });
     }
 
     /**
      * Gets current active roadmap for logged in user.
      * Returns null-safe response if no roadmap exists yet.
      */
-    public RoadmapResponse getMyRoadmap() {
-        Long userId = getCurrentUserId();
+    // One transaction for the whole method, so the lazy roadmap tree resolves
+    // inside an open session. readOnly = true: no dirty-checking, no flush.
+    @Transactional(readOnly = true)
+    public RoadmapResponse getMyRoadmap(Long userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
@@ -100,8 +134,10 @@ public class RoadmapService {
      * Gets all roadmaps for logged in user — active + archived.
      * Used to show roadmap history.
      */
-    public List<RoadmapResponse> getRoadmapHistory() {
-        Long userId = getCurrentUserId();
+    // One transaction for the whole method, so the lazy roadmap tree resolves
+    // inside an open session. readOnly = true: no dirty-checking, no flush.
+    @Transactional(readOnly = true)
+    public List<RoadmapResponse> getRoadmapHistory(Long userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
@@ -311,106 +347,57 @@ public class RoadmapService {
      * Result is NOT saved to DB — it's transient, just for form display.
      * User's selected specialization is saved when they submit roadmap form.
      */
+    /**
+     * Cached: this is a pure function of a job title, and the same few titles are
+     * requested constantly, so every hit is a Groq call saved.
+     *
+     * Keyed on the normalised dreamJob, which is safe because the controller caps it at
+     * 100 characters and checks it against a character allowlist.
+     */
+    @Cacheable(cacheNames = CacheConfig.SPECIALIZATIONS, key = "#dreamJob.trim().toLowerCase()")
     public SpecializationResponse getSpecializations(String dreamJob) {
         log.info("Getting specializations for: {}", dreamJob);
         return groqService.getSpecializations(dreamJob);
     }
 
     /**
-     * Generate returns only roadmapId — frontend redirects to /roadmap/{id}.
-     * Full roadmap fetched separately to avoid slow response on generate.
-
-    @Transactional
-//    public GenerateRoadmapResponse generateRoadmap(RoadmapGenerationRequest request) {
-//        Long userId = getCurrentUserId();
-//        log.info("Roadmap generation started for userId: {}", userId);
-//
-//        User user = userService.saveRoadmapFormData(request);
-//        archiveExistingRoadmap(user);
-//
-//        String aiResponse = groqService.generateRoadmap(user, request);
-//        log.info("AI roadmap response received for userId: {}", userId);
-//
-//        CareerRoadmap roadmap = parseAndSaveRoadmap(user, request, aiResponse);
-//        log.info("Roadmap saved with id: {}", roadmap.getId());
-//
-//        // return only id — frontend fetches full roadmap separately
-//        return new GenerateRoadmapResponse(roadmap.getId(), "Roadmap generated successfully");
-//    }
-     */
-
-    /**
-     * GET /api/roadmap/{id}
+     * GET /api/v1/roadmap/{id}
      * Returns full roadmap by id.
      * Validates roadmap belongs to current user — security check.
      */
-    public RoadmapResponse getRoadmapById(Long roadmapId) {
-        Long userId = getCurrentUserId();
+    // One transaction for the whole method, so the lazy roadmap tree resolves
+    // inside an open session. readOnly = true: no dirty-checking, no flush.
+    @Transactional(readOnly = true)
+    public RoadmapResponse getRoadmapById(Long userId, Long roadmapId) {
 
-        CareerRoadmap roadmap = roadmapRepository.findById(roadmapId)
+        // SECURITY: ownership is enforced in the query, not by a follow-up check.
+        CareerRoadmap roadmap = roadmapRepository.findByIdAndUserId(roadmapId, userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Roadmap not found"));
 
-        // security — user can only access their own roadmaps
-        if (!roadmap.getUser().getId().equals(userId)) {
-            throw new ResourceNotFoundException("Roadmap not found");
-        }
-
         return buildResponse(roadmap);
     }
 
     /**
-     * GET /api/roadmap/user
-     * Returns all roadmaps for current user — active and archived.
-     * Used for roadmap history page.
-     */
-    public List<RoadmapResponse> getUserRoadmaps() {
-        Long userId = getCurrentUserId();
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-
-        return roadmapRepository.findByUserOrderByGeneratedAtDesc(user)
-                .stream()
-                .map(this::buildResponse)
-                .toList();
-    }
-
-    /**
-     * GET /api/roadmap/latest
-     * Returns current active roadmap for logged in user.
-     * Returns 404 if no active roadmap — frontend shows generate CTA.
-     */
-    public RoadmapResponse getLatestRoadmap() {
-        Long userId = getCurrentUserId();
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-
-        CareerRoadmap roadmap = roadmapRepository
-                .findByUserAndStatus(user, RoadmapStatus.ACTIVE)
-                .orElseThrow(() -> new ResourceNotFoundException(
-                        "No active roadmap found. Please generate one."));
-
-        return buildResponse(roadmap);
-    }
-
-    /**
-     * PATCH /api/roadmap/{roadmapId}/step/{stepId}
+     * PATCH /api/v1/roadmap/{roadmapId}/step/{stepId}
      * Marks a step as completed or not completed.
      * Validates step belongs to a skill in the given roadmap — security check.
      */
     @Transactional
-    public void updateStepCompletion(Long roadmapId, Long stepId,
+    public void updateStepCompletion(Long userId, Long roadmapId, Long stepId,
                                      Boolean completed, Boolean skipped) {
-        Long userId = getCurrentUserId();
 
-        CareerRoadmap roadmap = roadmapRepository.findById(roadmapId)
-                .orElseThrow(() -> new ResourceNotFoundException("Roadmap not found"));
-
-        if (!roadmap.getUser().getId().equals(userId)) {
-            throw new ResourceNotFoundException("Roadmap not found");
-        }
-
-        SkillStep step = skillStepRepository.findById(stepId)
-                .orElseThrow(() -> new ResourceNotFoundException("Step not found"));
+        // SECURITY: a single query enforces BOTH conditions —
+        //   1. the step actually lives inside this roadmap
+        //   2. this roadmap belongs to the caller
+        // Both must stay in the query. Checking ownership in a separate if is what lets
+        // someone pass their own roadmapId with another user's stepId.
+        // Returns 404 rather than 403 — a 403 would confirm the step exists.
+        SkillStep step = skillStepRepository.findOwnedStep(stepId, roadmapId, userId)
+                .orElseThrow(() -> {
+                    log.warn("Denied step update — userId: {}, roadmapId: {}, stepId: {}",
+                            userId, roadmapId, stepId);
+                    return new ResourceNotFoundException("Step not found");
+                });
 
         // only update fields that were sent
         if (completed != null) step.setCompleted(completed);
@@ -421,8 +408,4 @@ public class RoadmapService {
                 stepId, completed, skipped, roadmapId);
     }
 
-    private Long getCurrentUserId() {
-        return Long.parseLong(SecurityContextHolder.getContext()
-                .getAuthentication().getName());
-    }
 }

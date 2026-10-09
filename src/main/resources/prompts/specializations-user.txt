@@ -1,0 +1,28 @@
+List specializations for this dream job: "{{dreamJob}}"
+
+Return ONLY this exact JSON:
+{
+  "specializations": [
+    {
+      "title": "specialization name",
+      "description": "one line — main technologies involved",
+      "coreTech": ["tech1", "tech2", "tech3", "tech4"]
+    }
+  ]
+}
+
+Rules:
+- Return exactly 7 specializations
+- All 7 must be variations or sub-fields of "{{dreamJob}}" specifically
+- Stay within the same domain — do not go outside "{{dreamJob}}" field
+- Example for "Full Stack Developer":
+    MERN Stack, MEAN Stack, Java Full Stack, Python Full Stack,
+    .NET Full Stack, Flutter Full Stack, Serverless Full Stack
+- Example for "Data Scientist":
+    Machine Learning, Deep Learning, NLP, Computer Vision,
+    Data Engineering, MLOps, Reinforcement Learning
+- Each must be genuinely distinct from others
+- coreTech: 3 to 5 core technologies per specialization
+- No niche or outdated specializations
+- If dream job has fewer than 7 clear specializations,
+  include role-level variations like Junior/Mid/Senior tracks

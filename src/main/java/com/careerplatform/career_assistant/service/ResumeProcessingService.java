@@ -9,9 +9,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.ArrayList;
@@ -30,88 +32,119 @@ public class ResumeProcessingService {
     private final UserRepository userRepository;
     private final GenerationLimitService generationLimitService;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final TransactionTemplate transactionTemplate;
 
     /**
      * Main resume processing pipeline.
      * Checks limit → saves file → extracts text → calls AI → saves analysis → returns response.
      */
-    @Transactional
-    public ResumeAnalysisResponse uploadAndAnalyze(MultipartFile file) {
-        Long userId = getCurrentUserId();
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+    /**
+     * NOT @Transactional — deliberately.
+     *
+     * A short transaction consumes quota, then file I/O, Tika extraction and the Groq
+     * call run with no connection held, then a second short transaction persists the
+     * results.
+     *
+     * Wrapping the whole method would hold a JDBC connection for the entire AI call.
+     * With HikariCP's default pool of 10, about ten concurrent uploads would take every
+     * connection and stall every other request in the app.
+     *
+     * TransactionTemplate rather than private @Transactional methods, because Spring
+     * proxies the bean — a self-invoked method bypasses the proxy, so its @Transactional
+     * would be silently ignored.
+     *
+     * The HTTP thread is still parked for the duration — making this asynchronous is
+     * what fixes that.
+     */
+    public ResumeAnalysisResponse uploadAndAnalyze(Long userId, MultipartFile file) {
 
-        // check monthly limit before doing anything
-        generationLimitService.checkAndIncrement(user, LimitType.RESUME);
+        // ── TX 1: short, DB only ──────────────────────────────────────────────
+        // Consume quota up front so parallel uploads cannot all pass the check.
+        User user = transactionTemplate.execute(status -> {
+            // Quota first: consume() runs a bulk UPDATE with clearAutomatically, so any
+            // entity loaded before it would come back detached.
+            generationLimitService.consume(userId, LimitType.RESUME);
+
+            return userRepository.findById(userId)
+                    .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+        });
 
         log.info("Resume processing started for userId: {}", userId);
 
-        // save file to disk
-        String filePath = fileStorageService.saveFile(file);
+        // ── No transaction: file I/O and the slow AI call ─────────────────────
+        String filePath = null;
+        try {
+            filePath = fileStorageService.saveFile(file);
 
-        // save resume record to DB
-        Resume resume = Resume.builder()
-                .user(user)
-                .fileName(file.getOriginalFilename())
-                .filePath(filePath)
-                .fileSize(file.getSize())
-                .fileType(file.getContentType())
-                .build();
-        resume = resumeRepository.save(resume);
+            String rawText = textExtractionService.extractText(filePath);
+            String aiResponseJson = resumeGroqService.analyzeResume(rawText, user);
 
-        // extract and clean text
-        String rawText = textExtractionService.extractText(filePath);
+            // ── TX 2: short, DB only ──────────────────────────────────────────
+            final String savedPath = filePath;
+            return transactionTemplate.execute(status -> {
+                User fresh = userRepository.findById(userId)
+                        .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
-        // call AI with resume text + user profile
-        String aiResponseJson = resumeGroqService.analyzeResume(rawText, user);
+                Resume resume = resumeRepository.save(Resume.builder()
+                        .user(fresh)
+                        .fileName(file.getOriginalFilename())
+                        .filePath(savedPath)
+                        .fileSize(file.getSize())
+                        .fileType(file.getContentType())
+                        .build());
 
-        // parse and save analysis
-        AnalysisResult analysis = parseAndSaveAnalysis(resume, user, aiResponseJson);
+                AnalysisResult analysis = parseAndSaveAnalysis(resume, fresh, aiResponseJson);
 
-        // refresh user — limit counter was updated
-        user = userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+                log.info("Resume analysis complete for resumeId: {}", resume.getId());
+                return buildResponse(resume, analysis,
+                        generationLimitService.buildResumeLimitResponse(fresh));
+            });
 
-        log.info("Resume analysis complete for resumeId: {}", resume.getId());
-        return buildResponse(resume, analysis,
-                generationLimitService.buildResumeLimitResponse(user));
+        } catch (RuntimeException ex) {
+            // Refund the quota — the user should not be charged for a failed analysis.
+            generationLimitService.release(userId, LimitType.RESUME);
+
+            // Remove the file we wrote. The Resume row is only inserted in TX 2, so a
+            // failure before that point would otherwise leave an unreferenced file on
+            // disk forever — Files.copy is not covered by any transaction.
+            if (filePath != null) {
+                fileStorageService.deleteFile(filePath);
+            }
+            throw ex;
+        }
     }
 
     /**
      * Returns all resumes for current user — lightweight list for history.
+     *
+     * 5.5: this was the N+1. It loaded the resume list, then called
+     * analysisResultRepository.findByResume() once per row inside the stream — 20
+     * resumes meant 1 + 20 = 21 round trips. It is now a single LEFT JOIN projection
+     * that builds the DTOs in the database, so the query count no longer depends on how
+     * many resumes the user has.
+     *
+     * The User lookup is gone too. It existed only to pass an entity to
+     * findByUserOrderByUploadTimeDesc; the id from the JWT is enough, and a caller who
+     * got past JwtAuthenticationFilter necessarily has a row. That removes one more
+     * query from a read-only path.
+     *
+     * Still unbounded — pagination is noted as deferred in PHASE5-CHANGES.md because it
+     * changes the response shape and needs a frontend change to land with it.
      */
-    public List<ResumeListItemResponse> getMyResumes() {
-        Long userId = getCurrentUserId();
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-
-        return resumeRepository.findByUserOrderByUploadTimeDesc(user).stream()
-                .map(resume -> analysisResultRepository.findByResume(resume)
-                        .map(a -> new ResumeListItemResponse(
-                                resume.getId(), a.getId(),
-                                resume.getFileName(), resume.getUploadTime(),
-                                a.getOverallScore(), a.getAtsScore(),
-                                a.getInterviewReadiness(), a.getExperienceLevel()))
-                        .orElse(new ResumeListItemResponse(
-                                resume.getId(), null,
-                                resume.getFileName(), resume.getUploadTime(),
-                                null, null, null, null)))
-                .toList();
+    @Transactional(readOnly = true)
+    public List<ResumeListItemResponse> getMyResumes(Long userId) {
+        return resumeRepository.findListForUser(userId);
     }
 
     /**
      * Returns specific resume with full analysis by resumeId.
      * User can only access their own resumes.
      */
-    public ResumeAnalysisResponse getResumeById(Long resumeId) {
-        Long userId = getCurrentUserId();
+    public ResumeAnalysisResponse getResumeById(Long userId, Long resumeId) {
 
-        Resume resume = resumeRepository.findById(resumeId)
+        // SECURITY: ownership enforced in the query, not by a follow-up check.
+        Resume resume = resumeRepository.findByIdAndUserId(resumeId, userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Resume not found"));
-
-        if (!resume.getUser().getId().equals(userId)) {
-            throw new ResourceNotFoundException("Resume not found");
-        }
 
         AnalysisResult analysis = analysisResultRepository.findByResume(resume)
                 .orElseThrow(() -> new ResourceNotFoundException("Analysis not found"));
@@ -127,22 +160,46 @@ public class ResumeProcessingService {
      * Deletes resume and its file from disk.
      */
     @Transactional
-    public void deleteResume(Long resumeId) {
-        Long userId = getCurrentUserId();
+    public void deleteResume(Long userId, Long resumeId) {
 
-        Resume resume = resumeRepository.findById(resumeId)
+        // SECURITY: ownership enforced in the query, not by a follow-up check.
+        Resume resume = resumeRepository.findByIdAndUserId(resumeId, userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Resume not found"));
 
-        if (!resume.getUser().getId().equals(userId)) {
-            throw new ResourceNotFoundException("Resume not found");
-        }
-
-        fileStorageService.deleteFile(resume.getFilePath());
+        String filePath = resume.getFilePath();
         resumeRepository.delete(resume);
+
+        // Delete the file only AFTER the transaction commits. Doing it first meant
+        // a rollback left the row pointing at a file that no longer existed.
+        TransactionSynchronizationManager.registerSynchronization(
+                new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        fileStorageService.deleteFile(filePath);
+                    }
+                });
         log.info("Resume deleted: {}", resumeId);
     }
 
     // ── private helpers ───────────────────────────────────────────
+
+    /**
+     * Reads a score from the AI response and forces it into the range 0-100.
+     *
+     * The model's output is untrusted for the same reason the resume is: text in the
+     * resume can influence it, and whatever comes back would otherwise be written
+     * straight to the database.
+     *
+     * Clamping does not prevent injection — it bounds the damage to something the UI can
+     * render and a human can sanity check.
+     */
+    private int score(com.fasterxml.jackson.databind.JsonNode scores, String field) {
+        int raw = scores.path(field).asInt(0);
+        if (raw < 0 || raw > 100) {
+            log.warn("AI returned out-of-range {}: {} - clamping", field, raw);
+        }
+        return Math.max(0, Math.min(100, raw));
+    }
 
     private AnalysisResult parseAndSaveAnalysis(Resume resume, User user, String aiJson) {
         try {
@@ -161,11 +218,11 @@ public class ResumeProcessingService {
                     .interviewReadiness(text(root, "interviewReadiness"))
                     .dreamJobMatchSummary(text(root, "dreamJobMatchSummary"))
                     .summary(text(root, "summary"))
-                    .overallScore(scores.path("overallScore").asInt())
-                    .atsScore(scores.path("atsScore").asInt())
-                    .technicalSkillsScore(scores.path("technicalSkillsScore").asInt())
-                    .projectQualityScore(scores.path("projectQualityScore").asInt())
-                    .formattingScore(scores.path("formattingScore").asInt())
+                    .overallScore(score(scores, "overallScore"))
+                    .atsScore(score(scores, "atsScore"))
+                    .technicalSkillsScore(score(scores, "technicalSkillsScore"))
+                    .projectQualityScore(score(scores, "projectQualityScore"))
+                    .formattingScore(score(scores, "formattingScore"))
                     .technicalSkills(root.path("technicalSkills").toString())
                     .strengths(root.path("strengths").toString())
                     .weaknesses(root.path("weaknesses").toString())
@@ -251,11 +308,6 @@ public class ResumeProcessingService {
     private String text(JsonNode node, String field) {
         return node.has(field) && !node.path(field).isNull()
                 ? node.path(field).asText() : null;
-    }
-
-    private Long getCurrentUserId() {
-        return Long.parseLong(SecurityContextHolder.getContext()
-                .getAuthentication().getName());
     }
 
     /**

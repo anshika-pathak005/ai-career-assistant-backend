@@ -1,117 +1,137 @@
 package com.careerplatform.career_assistant.config;
 
+import com.careerplatform.career_assistant.exception.ErrorResponse;
+import com.careerplatform.career_assistant.security.AuthenticatedUser;
 import com.careerplatform.career_assistant.service.UserDetailsServiceImpl;
 import com.careerplatform.career_assistant.util.JwtUtil;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.Set;
 
-// Runs once per request — intercepts every request before it hits the controller
-// Checks for JWT token in Authorization header, validates it, sets authentication
+/**
+ * Authenticates every request carrying a Bearer token, and populates the SecurityContext.
+ *
+ * Parses the token once, loads the user, then checks the token's "tv" claim against the
+ * user's current tokenVersion. A mismatch means the token was revoked by a logout or a
+ * password change, and the request is rejected with 401.
+ *
+ * Requests without a token are passed through untouched — Spring's authorization rules
+ * stop them, and RestAuthenticationEntryPoint writes the 401.
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
+    /**
+     * Endpoints reachable without a token.
+     * Exact match, not prefix match: an allowlist means any new endpoint under the auth
+     * namespace is protected unless it is deliberately added here.
+     * Keep in sync with the permitAll() list in SecurityConfig.
+     */
+    private static final Set<String> PUBLIC_PATHS = Set.of(
+            ApiPaths.REGISTER_STEP1,
+            ApiPaths.LOGIN,
+            ApiPaths.REFRESH,
+            ApiPaths.LOGOUT
+    );
+
     private final JwtUtil jwtUtil;
     private final UserDetailsServiceImpl userDetailsService;
+    private final ObjectMapper objectMapper;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
 
-        // skip JWT filter entirely for public endpoints
-        String path = request.getRequestURI();
-        if (path.startsWith("/api/auth/")) {
+        if (PUBLIC_PATHS.contains(request.getRequestURI())) {
             filterChain.doFilter(request, response);
             return;
         }
 
-        // get Authorization header from request
-        // expected format: "Bearer eyJhbGciOiJIUzI1NiJ9..."
         String authHeader = request.getHeader("Authorization");
 
-        // if no token present — skip filter, let request continue
-        // public endpoints (login, register) will pass through here without token
+        // No token: let the chain continue. The request is stopped by
+        // authorizeHttpRequests and answered as JSON by RestAuthenticationEntryPoint.
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
             filterChain.doFilter(request, response);
             return;
         }
 
-        // extract token by removing "Bearer " prefix (7 characters)
         String token = authHeader.substring(7);
-        log.info("JWT token found in request");
 
-        try {
-            // extract userId from token
-            Long userId = jwtUtil.extractUserId(token);
-            String userIdStr = String.valueOf(userId);
-
-            // only authenticate if:
-            // 1. userId was extracted successfully
-            // 2. no authentication is already set in SecurityContext (avoid re-authentication)
-            if (userId != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-
-                // validate token — checks signature and expiry
-                if (jwtUtil.validateToken(token)) {
-
-                    // load user from DB using userId
-                    UserDetails userDetails = userDetailsService.loadUserByUsername(userIdStr);
-
-                    // create authentication token — this is what Spring Security understands
-                    UsernamePasswordAuthenticationToken authToken =
-                            new UsernamePasswordAuthenticationToken(
-                                    userDetails,
-                                    null,                        // credentials null — token already validated
-                                    userDetails.getAuthorities() // empty for now, roles added later
-                            );
-
-                    // attach request details (IP, session) to authentication
-                    authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-
-                    // set authentication in SecurityContext
-                    // this is what tells Spring — "this request is authenticated, let it through"
-                    SecurityContextHolder.getContext().setAuthentication(authToken);
-                    log.info("Authentication set in SecurityContext for userId: {}", userId);
-
-                } else {
-                    log.warn("Invalid or expired JWT token for userId: {}", userId);
-                    // return 401 immediately — then frontend refresh token logic triggers
-                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-                    response.setContentType("application/json");
-                    response.getWriter().write(
-                            "{\"status\": 401, \"message\": \"Token expired. Please refresh.\"}"
-                    );
-                    return; // stop filter chain
-                }
-            }
-
-        } catch (Exception ex) {
-            // token is malformed or tampered — log and continue without setting auth
-            // Spring Security will block the request at SecurityFilterChain level
-            log.error("JWT authentication failed: {}", ex.getMessage());
-            // return 401 on malformed/tampered token too
-            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-            response.setContentType("application/json");
-            response.getWriter().write(
-                    "{\"status\": 401, \"message\": \"Invalid token. Please login again.\"}"
-            );
+        // Already authenticated earlier in the chain — do not redo it.
+        if (SecurityContextHolder.getContext().getAuthentication() != null) {
+            filterChain.doFilter(request, response);
             return;
         }
 
-        // continue the filter chain — request proceeds to controller
+        Claims claims;
+        try {
+            // Signature, expiry, issuer and audience, all in one parse.
+            claims = jwtUtil.parse(token);
+        } catch (JwtException | IllegalArgumentException ex) {
+            log.debug("Rejected token on {}: {}", request.getRequestURI(), ex.getMessage());
+            writeError(response, "Invalid or expired token. Please refresh or log in again.");
+            return;
+        }
+
+        Long userId = jwtUtil.userIdFrom(claims);
+
+        AuthenticatedUser user;
+        try {
+            user = userDetailsService.loadAuthenticatedUser(userId);
+        } catch (UsernameNotFoundException ex) {
+            // A correctly signed token for an account that no longer exists.
+            log.warn("Valid token for unknown userId: {}", userId);
+            writeError(response, "Invalid or expired token. Please refresh or log in again.");
+            return;
+        }
+
+        // Revocation check. A mismatch means a logout or password change happened after
+        // this token was issued.
+        if (jwtUtil.tokenVersionFrom(claims) != user.getTokenVersion()) {
+            log.info("Revoked token presented for userId: {}", userId);
+            writeError(response, "Session ended. Please log in again.");
+            return;
+        }
+
+        UsernamePasswordAuthenticationToken authToken =
+                new UsernamePasswordAuthenticationToken(user, null, user.getAuthorities());
+        authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+        SecurityContextHolder.getContext().setAuthentication(authToken);
+
         filterChain.doFilter(request, response);
+    }
+
+    /**
+     * Writes a 401 with the app's ErrorResponse shape.
+     * The message is the same for every rejection reason on purpose: distinguishing
+     * expired from tampered from unknown-user tells an attacker which part of a forged
+     * token to change next.
+     */
+    private void writeError(HttpServletResponse response, String message) throws IOException {
+        response.setStatus(HttpStatus.UNAUTHORIZED.value());
+        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        response.setCharacterEncoding("UTF-8");
+        objectMapper.writeValue(response.getWriter(), ErrorResponse.of(HttpStatus.UNAUTHORIZED.value(), message));
     }
 }

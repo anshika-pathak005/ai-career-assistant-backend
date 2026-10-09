@@ -1,0 +1,255 @@
+Generate a complete personalized career roadmap for: "{{dreamJob}}" with specialization "{{specialization}}"
+
+═══════════════════════════════════════════════
+USER PROFILE
+═══════════════════════════════════════════════
+Dream Job        : {{dreamJob}}
+Specialization   : {{specialization}}
+User Category    : {{userCategory}}
+Current Role     : {{currentRole}}
+Experience Level : {{experienceLevel}}
+Target Industries: {{industries}}
+═══════════════════════════════════════════════
+ROADMAP PREFERENCES
+═══════════════════════════════════════════════
+Goal Type        : {{goalType}}
+Project Level    : {{projectLevel}}
+Learning Style   : {{learningStyle}}
+Weekly Hours     : {{weeklyHours}} hours/week
+═══════════════════════════════════════════════
+CURRENT SKILLS AND LEVELS
+═══════════════════════════════════════════════
+{{skillLevels}}
+═══════════════════════════════════════════════
+
+================================================
+DOMAIN DETECTION (Auto-adjust based on dream job)
+================================================
+
+Based on dream job "{{dreamJob}}", identify the domain and generate relevant skills:
+
+For "Full Stack" or "Web Developer":
+- Frontend: HTML, CSS, JavaScript, React/Angular/Vue
+- Backend: Node.js/Python/Java, Express/Django/Spring Boot
+- Database: SQL, MongoDB/PostgreSQL
+- Tools: Git, Docker, Testing, Deployment
+- Projects: 5 web applications (Task Manager, E-commerce, Blog, Social Media, Capstone)
+
+For "Data Scientist" or "Data Analyst":
+- Python (Pandas, NumPy, Matplotlib)
+- SQL for data extraction
+- Statistics & Probability
+- Machine Learning (scikit-learn, TensorFlow)
+- Data Visualization (Tableau, Power BI)
+- Projects: 5 data projects (EDA, Predictive Modeling, Clustering, NLP, Dashboard)
+
+For "DevOps" or "Cloud Engineer":
+- Linux & Shell Scripting
+- CI/CD (Jenkins, GitHub Actions)
+- Containerization (Docker, Kubernetes)
+- Cloud (AWS/Azure/GCP)
+- Infrastructure as Code (Terraform)
+- Projects: 5 DevOps projects (CI/CD Pipeline, Containerized App, K8s Deployment, Monitoring Stack, IaC)
+
+For "Mobile Developer":
+- Platform (iOS: Swift, Android: Kotlin, Cross: Flutter/React Native)
+- UI/UX principles for mobile
+- State management
+- API integration
+- App store deployment
+- Projects: 5 mobile apps (Weather, Task Manager, Chat, E-commerce, Social Media)
+
+For "AI/ML Engineer":
+- Python fundamentals
+- Data preprocessing
+- ML algorithms (regression, classification, clustering)
+- Deep Learning (Neural Networks)
+- MLOps (model deployment)
+- Projects: 5 AI projects (Predictive Model, Image Classification, NLP, Recommendation, LLM App)
+
+================================================
+STEP TOPIC EXAMPLES (Follow this pattern)
+================================================
+
+For Programming Language (Python/Java/JavaScript):
+✓ "Variables & Data Types"
+✓ "Control Flow: if-else, loops"
+✓ "Functions & Scope"
+✓ "Data Structures: Lists, Dictionaries, Objects"
+✓ "Error Handling & Debugging"
+✓ "File I/O Operations"
+
+For Frontend Framework (React/Angular/Vue):
+✓ "Components & Props"
+✓ "State Management with Hooks"
+✓ "Event Handling & Forms"
+✓ "Routing & Navigation"
+✓ "API Integration (fetch/axios)"
+✓ "Performance Optimization"
+
+For Backend Framework (Express/Django/Spring):
+✓ "Setting up routes & endpoints"
+✓ "Middleware & Request handling"
+✓ "Database integration (ORM/ODM)"
+✓ "Authentication & JWT"
+✓ "Error handling & logging"
+✓ "API documentation"
+
+For Database (SQL/MongoDB):
+✓ "CRUD operations"
+✓ "Schema/Model design"
+✓ "Querying & filtering"
+✓ "Relationships & Joins"
+✓ "Indexing for performance"
+✓ "Aggregation pipelines"
+
+For Tools (Git/Docker):
+✓ "git init, add, commit workflow"
+✓ "Branching & merging strategies"
+✓ "Remote repositories (push, pull, clone)"
+✓ "Dockerfile & container basics"
+✓ "Docker Compose for multi-container"
+✓ "CI/CD pipeline setup"
+
+================================================
+RESOURCE FORMAT (MUST FOLLOW EXACTLY)
+================================================
+
+Each skill and project must have "resources" array with EXACTLY 3 items.
+Each item must have this structure:
+
+{
+  "name": "Descriptive name of resource",
+  "url": "https://actual-working-url.com",
+  "type": "DOCUMENTATION" or "COURSE" or "VIDEO" or "ARTICLE" or "PRACTICE"
+}
+
+REAL RESOURCE EXAMPLES:
+
+HTML/CSS Resources:
+- {"name": "MDN HTML Reference", "url": "https://developer.mozilla.org/en-US/docs/Web/HTML", "type": "DOCUMENTATION"}
+- {"name": "freeCodeCamp Responsive Design", "url": "https://www.freecodecamp.org/learn/2022/responsive-web-design/", "type": "COURSE"}
+- {"name": "CSS Flexbox Tutorial", "url": "https://youtu.be/JJSoEo8JSnc", "type": "VIDEO"}
+
+JavaScript Resources:
+- {"name": "MDN JavaScript Guide", "url": "https://developer.mozilla.org/en-US/docs/Web/JavaScript", "type": "DOCUMENTATION"}
+- {"name": "JavaScript.info", "url": "https://javascript.info/", "type": "COURSE"}
+- {"name": "LeetCode Practice", "url": "https://leetcode.com/problemset/javascript/", "type": "PRACTICE"}
+
+React Resources:
+- {"name": "React Official Docs", "url": "https://react.dev/learn", "type": "DOCUMENTATION"}
+- {"name": "React Tutorial for Beginners", "url": "https://youtu.be/SqcY0GlETPk", "type": "VIDEO"}
+- {"name": "Scrimba React Course", "url": "https://scrimba.com/learn/learnreact", "type": "COURSE"}
+
+================================================
+
+Return ONLY this exact JSON structure:
+
+{
+  "summary": "2-3 sentence personalized summary for becoming a {{dreamJob}}",
+  "totalEstimatedWeeks": <integer based on weeklyHours: weeklyHours = {{weeklyHours}}, calculate total weeks>,
+  "phases": [
+    {
+      "title": "Phase 1: Foundation",
+      "description": "Build fundamental skills for {{dreamJob}}",
+      "estimatedWeeks": <integer>,
+      "skills": [
+        {
+          "skillName": "Specific skill name",
+          "skillType": "SKILL",
+          "isExistingSkill": <true/false based on user's current skills>,
+          "startingLevel": "BEGINNER",
+          "targetLevel": "INTERMEDIATE",
+          "estimatedDays": <integer 7-21>,
+          "resources": [
+            {"name": "...", "url": "...", "type": "..."},
+            {"name": "...", "url": "...", "type": "..."},
+            {"name": "...", "url": "...", "type": "..."}
+          ],
+          "steps": [
+            {
+              "title": "Specific topic title",
+              "description": "What to learn in this step",
+              "estimatedHours": <integer 2-8>
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Phase 2: Core Intermediate",
+      "description": "Build mid-level skills for {{dreamJob}}",
+      "estimatedWeeks": <integer>,
+      "skills": [ ... same structure ... ]
+    },
+    {
+      "title": "Phase 3: Advanced Concepts",
+      "description": "Master advanced topics for {{dreamJob}}",
+      "estimatedWeeks": <integer>,
+      "skills": [ ... same structure ... ]
+    },
+    {
+      "title": "Phase 4: Tools & Best Practices",
+      "description": "Learn essential development tools",
+      "estimatedWeeks": <integer>,
+      "skills": [
+        {
+          "skillName": "Git & GitHub",
+          "skillType": "TOOL",
+          "isExistingSkill": false,
+          "startingLevel": "BEGINNER",
+          "targetLevel": "INTERMEDIATE",
+          "estimatedDays": 7,
+          "resources": [...],
+          "steps": [...]
+        },
+        {
+          "skillName": "Docker Basics",
+          "skillType": "TOOL",
+          ...
+        },
+        {
+          "skillName": "Testing (Jest/React Testing Library)",
+          "skillType": "TOOL",
+          ...
+        }
+      ]
+    },
+    {
+      "title": "Phase 5: Portfolio Projects",
+      "description": "Build job-ready projects",
+      "estimatedWeeks": <integer>,
+      "skills": [
+        {
+          "skillName": "Real Project Name 1",
+          "skillType": "PROJECT",
+          "projectDescription": "What this project does and what you will learn",
+          "techStack": ["tech1", "tech2", "tech3", "tech4", "tech5"],
+          "estimatedDays": <integer 10-21>,
+          "resources": [
+            {"name": "...", "url": "...", "type": "..."},
+            {"name": "...", "url": "...", "type": "..."},
+            {"name": "...", "url": "...", "type": "..."}
+          ],
+          "steps": [
+            {
+              "title": "Milestone title",
+              "description": "Specific development phase",
+              "estimatedHours": <integer 4-12>
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+
+IMPORTANT REMINDERS:
+- Generate EXACTLY 5 phases
+- Phase 5 must have EXACTLY 5 projects
+- Each resource MUST have a REAL URL (no fake links)
+- Steps must be SPECIFIC TOPICS, not generic actions
+- All content must be specific to: {{dreamJob}} | {{specialization}}
+- Use second person ("you", "your") throughout
+
+Now generate the roadmap.

@@ -1,0 +1,117 @@
+Analyze this resume critically and honestly in context of the user's career goal.
+
+<user_career_context>
+Dream Job        : {{dreamJob}}   ← most important — analyze resume against this
+Current Role     : {{currentRole}}
+Experience Level : {{experienceLevel}}
+Self-Reported Skills : {{skills}}
+Target Industries: {{industries}}
+</user_career_context>
+
+<resume_content>
+{{resumeText}}
+</resume_content>
+
+CRITICAL INSTRUCTIONS:
+- Compare resume skills and projects against what "{{dreamJob}}" role actually requires
+- missingSkills = skills a "{{dreamJob}}" needs that are NOT in this resume
+- improvementSuggestions = specific things to add or fix in THIS resume
+- projectSuggestions = projects to build that directly fill gaps for "{{dreamJob}}"
+- recommendedLearning = technologies to learn next to become ready for "{{dreamJob}}"
+- Score honestly — a student resume should NOT score above 70 overall
+- dreamJobMatchSummary = how well this resume positions them for "{{dreamJob}}"
+
+Return ONLY this exact JSON — every field required:
+
+{
+  "fullName": "extracted from resume",
+  "email": "extracted from resume",
+  "phone": "extracted from resume",
+  "currentRole": "most recent job title or student status from resume",
+  "experienceLevel": "Entry or Mid or Senior",
+  "experienceYears": <decimal like 1.5 or 0>,
+  "interviewReadiness": "Beginner or Moderate or Job Ready",
+  "dreamJobMatchSummary": "2 sentences — how well resume matches dream job and what is the biggest gap",
+  "summary": "exactly 3 sentences in second person: your current state, your key strength, your biggest gap for dream job",
+  "scores": {
+    "overallScore": <0-100, honest>,
+    "atsScore": <0-100, penalize missing keywords and non-standard formatting>,
+    "technicalSkillsScore": <0-100, based on depth and relevance of technical skills>,
+    "projectQualityScore": <0-100, based on complexity, deployment, real-world relevance>,
+    "formattingScore": <0-100, based on clarity, structure, readability>
+  },
+  "technicalSkills": ["skills found in resume"],
+  "strengths": [
+    "specific strength 1 from THIS resume",
+    "specific strength 2 from THIS resume",
+    "specific strength 3 from THIS resume"
+  ],
+  "weaknesses": [
+    "specific weakness 1 of THIS resume",
+    "specific weakness 2 of THIS resume",
+    "specific weakness 3 of THIS resume"
+  ],
+  "missingSkills": [
+    "most critical skill missing for dream job",
+    "second most critical",
+    "third",
+    "fourth",
+    "fifth — add up to 8 if needed"
+  ],
+  "missingKeywords": ["ATS keyword missing for dream job"],
+  "improvementSuggestions": [
+    "specific improvement 1 for THIS resume",
+    "specific improvement 2",
+    "specific improvement 3",
+    "specific improvement 4",
+    "specific improvement 5"
+  ],
+  "projectSuggestions": [
+    "Project 1: name — description — tech stack — directly fills gap for dream job",
+    "Project 2: name — description — tech stack",
+    "Project 3: name — description — tech stack"
+  ],
+  "recommendedLearning": [
+    "technology or concept 1 — why it matters for dream job",
+    "technology or concept 2 — why it matters",
+    "technology or concept 3 — why it matters",
+    "technology or concept 4 — why it matters"
+  ],
+  "resumeVerdict": "one punchy line summarizing overall resume quality — like a badge",
+    "recruiterPerspective": "2 sentences — how a recruiter at a tech company would view this resume honestly",
+    "prioritySkills": [
+      "most important skill to learn first for dream job",
+      "second priority",
+      "third priority"
+    ],
+    "recommendedRoles": [
+      "role that matches current resume strengths",
+      "another realistic role",
+      "stretch role closer to dream job"
+    ],
+    "recommendedCertifications": [
+      "certification 1 relevant to dream job",
+      "certification 2",
+      "certification 3"
+    ],
+    "atsSuggestions": [
+      "specific ATS fix 1",
+      "specific ATS fix 2",
+      "specific ATS fix 3"
+    ],
+    "sectionAnalysis": {
+      "education": "one sentence honest assessment of education section",
+      "skills": "one sentence assessment of skills section relevance and presentation",
+      "projects": "one sentence assessment of project quality and relevance",
+      "experience": "one sentence assessment of experience section or note if absent",
+      "certifications": "one sentence — mentions certifications found or notes absence"
+    }
+}
+
+Scoring rules:
+- overallScore: weighted average of all 4 scores
+- atsScore below 60 if standard sections missing or keywords absent
+- technicalSkillsScore based on relevance to dream job, not just quantity
+- projectQualityScore below 50 if no deployment links or real-world projects
+- formattingScore below 70 if resume is hard to scan in 6 seconds
+- Never give overallScore above 80 unless resume is genuinely impressive

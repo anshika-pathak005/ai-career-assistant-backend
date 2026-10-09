@@ -5,7 +5,18 @@
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>3.5.14-SNAPSHOT</version>
+		<!--
+		  Phase 0.2, finally done (7.4). This was 3.5.14-SNAPSHOT: a moving target, so the
+		  same source could produce a different artifact tomorrow, and repo.spring.io was a
+		  build dependency.
+
+		  READ THIS BEFORE THE NEXT DEPLOY: 3.5.16 is the LAST open-source release of the
+		  3.5 line. Spring Boot 3.5 reached OSS end of life on 30 June 2026 and no further
+		  patches ship to Maven Central. Pinning here makes the build reproducible; it does
+		  not make it supported. Budget the 4.x upgrade (Spring Framework 7, Spring
+		  Security 7) as its own piece of work - see PHASE7-CHANGES.md section 6.
+		-->
+		<version>3.5.16</version>
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
 
@@ -32,7 +43,17 @@
 	</scm>
 	<properties>
 		<java.version>21</java.version>
-		<spring-ai.version>1.1.4</spring-ai.version>
+		<springdoc.version>2.8.9</springdoc.version>
+		<jacoco.version>0.8.12</jacoco.version>
+		<spotbugs.plugin.version>4.8.6.4</spotbugs.plugin.version>
+		<findsecbugs.version>1.13.0</findsecbugs.version>
+		<dependency-check.version>10.0.4</dependency-check.version>
+		<!--
+		  Minimum line coverage for service/ and config/ (7.4). Deliberately low: it is a
+		  ratchet, not a target. Raise it as tests land. Setting it to something aspirational
+		  today just means the first person to touch the build disables it.
+		-->
+		<coverage.minimum>0.30</coverage.minimum>
 	</properties>
 
 	<dependencies>
@@ -51,6 +72,27 @@
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-starter-web</artifactId>
+		</dependency>
+
+		<!--
+		  Actuator (7.2) - /health, /metrics and the Kubernetes probes. Exposed on a
+		  SEPARATE management port; see the management.* block in application.properties
+		  and the warning about it in PHASE7-CHANGES.md.
+		-->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-actuator</artifactId>
+		</dependency>
+
+		<!--
+		  Micrometer's Prometheus registry (7.2). Adding it is what makes
+		  /actuator/prometheus exist; actuator alone gives you /metrics in a format
+		  nothing scrapes. Version managed by the parent.
+		-->
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-registry-prometheus</artifactId>
+			<scope>runtime</scope>
 		</dependency>
 
 		<!-- JWT -->
@@ -72,27 +114,11 @@
 			<scope>runtime</scope>
 		</dependency>
 
-<!--		<dependency>-->
-<!--			<groupId>org.springframework.ai</groupId>-->
-<!--			<artifactId>spring-ai-pdf-document-reader</artifactId>-->
-<!--		</dependency>-->
-
-<!--		<dependency>-->
-<!--			<groupId>org.springframework.ai</groupId>-->
-<!--			<artifactId>spring-ai-starter-model-openai</artifactId>-->
-<!--		</dependency>-->
-
 		<dependency>
 			<groupId>com.mysql</groupId>
 			<artifactId>mysql-connector-j</artifactId>
 			<scope>runtime</scope>
 		</dependency>
-
-<!--		<dependency>-->
-<!--			<groupId>org.postgresql</groupId>-->
-<!--			<artifactId>postgresql</artifactId>-->
-<!--			<scope>runtime</scope>-->
-<!--		</dependency>-->
 
 		<dependency>
 			<groupId>org.projectlombok</groupId>
@@ -111,6 +137,18 @@
 			<scope>test</scope>
 		</dependency>
 
+		<!-- Caffeine — bounded, self-evicting cache used by RateLimitingFilter.
+		     Version is managed by spring-boot-dependencies, so none is declared. -->
+		<dependency>
+			<groupId>com.github.ben-manes.caffeine</groupId>
+			<artifactId>caffeine</artifactId>
+		</dependency>
+
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-cache</artifactId>
+		</dependency>
+
 		<!-- Apache Tika — text extraction from PDF/DOCX -->
 		<dependency>
 			<groupId>org.apache.tika</groupId>
@@ -123,32 +161,28 @@
 			<version>2.9.2</version>
 		</dependency>
 
-		<!-- OkHttp — for calling Gemini API directly (simpler than Spring AI) -->
+		<!-- OkHttp — HTTP client for the Groq API. See ai/GroqHttpConfig. -->
 		<dependency>
 			<groupId>com.squareup.okhttp3</groupId>
 			<artifactId>okhttp</artifactId>
 			<version>4.12.0</version>
 		</dependency>
 
-		<!-- Jackson — for parsing Gemini JSON response -->
+		<!-- springdoc-openapi (6.8) — generated OpenAPI document and Swagger UI.
+		     Disable in deployed profiles: springdoc.api-docs.enabled=false. -->
+		<dependency>
+			<groupId>org.springdoc</groupId>
+			<artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+			<version>${springdoc.version}</version>
+		</dependency>
+
+		<!-- Jackson — request/response JSON for the Groq API -->
 		<dependency>
 			<groupId>com.fasterxml.jackson.core</groupId>
 			<artifactId>jackson-databind</artifactId>
 		</dependency>
 
 	</dependencies>
-
-	<dependencyManagement>
-		<dependencies>
-			<dependency>
-				<groupId>org.springframework.ai</groupId>
-				<artifactId>spring-ai-bom</artifactId>
-				<version>${spring-ai.version}</version>
-				<type>pom</type>
-				<scope>import</scope>
-			</dependency>
-		</dependencies>
-	</dependencyManagement>
 
 	<build>
 		<plugins>
@@ -200,29 +234,170 @@
 					</execution>
 				</executions>
 			</plugin>
+
+			<!--
+			  JaCoCo (7.4). `report` binds to test, `check` to verify, so `mvn verify`
+			  is the one command that runs everything.
+
+			  The rule below covers service/ and config/ ONLY. Those two packages hold
+			  every decision this refactor was about - transaction boundaries, auth,
+			  quota, rate limiting - and an aggregate number over the whole project would
+			  let coverage of DTOs and getters hide the fact that none of it is tested.
+			-->
+			<plugin>
+				<groupId>org.jacoco</groupId>
+				<artifactId>jacoco-maven-plugin</artifactId>
+				<version>${jacoco.version}</version>
+				<executions>
+					<execution>
+						<id>prepare-agent</id>
+						<goals><goal>prepare-agent</goal></goals>
+					</execution>
+					<execution>
+						<id>report</id>
+						<phase>test</phase>
+						<goals><goal>report</goal></goals>
+					</execution>
+					<execution>
+						<id>check-critical-packages</id>
+						<phase>verify</phase>
+						<goals><goal>check</goal></goals>
+						<configuration>
+							<rules>
+								<rule>
+									<element>PACKAGE</element>
+									<!--
+									  BOTH forms of each package are needed. JaCoCo's
+									  matcher does not treat '.' as a separator - '*' just
+									  matches any characters - so 'service.*' requires a
+									  literal dot AFTER 'service', which the package
+									  itself does not have. Listing only the wildcard
+									  form matches NOTHING and the rule passes silently,
+									  which is the worst failure a quality gate can have:
+									  green, and measuring zero classes.
+
+									  Confirm it is live: `./mvnw jacoco:check` must
+									  report the rule being evaluated, and dropping
+									  coverage.minimum to 0.99 must make the build FAIL.
+									-->
+									<includes>
+										<include>com.careerplatform.career_assistant.service</include>
+										<include>com.careerplatform.career_assistant.service.*</include>
+										<include>com.careerplatform.career_assistant.config</include>
+										<include>com.careerplatform.career_assistant.config.*</include>
+									</includes>
+									<limits>
+										<limit>
+											<counter>LINE</counter>
+											<value>COVEREDRATIO</value>
+											<minimum>${coverage.minimum}</minimum>
+										</limit>
+									</limits>
+								</rule>
+							</rules>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+
+			<!--
+			  SpotBugs with the find-sec-bugs plugin (7.4).
+
+			  find-sec-bugs is the part that earns its place: it catches hardcoded
+			  secrets, path traversal, weak randomness, unvalidated redirects and SQL
+			  built by concatenation - a real subset of the list this refactor worked
+			  through, found automatically on every build instead of by reading.
+
+			  threshold=Medium and effort=Max. Low floods you and gets ignored; the
+			  default effort skips the interprocedural analysis that finds the
+			  interesting ones.
+
+			  failOnError is TRUE, so a new finding breaks the build rather than adding a
+			  line to a report nobody opens. Expect the first run to fail - see
+			  PHASE7-CHANGES.md section 5 for what to do with the existing findings.
+			-->
+			<plugin>
+				<groupId>com.github.spotbugs</groupId>
+				<artifactId>spotbugs-maven-plugin</artifactId>
+				<version>${spotbugs.plugin.version}</version>
+				<configuration>
+					<effort>Max</effort>
+					<threshold>Medium</threshold>
+					<failOnError>true</failOnError>
+					<includeTests>false</includeTests>
+					<excludeFilterFile>spotbugs-exclude.xml</excludeFilterFile>
+					<plugins>
+						<plugin>
+							<groupId>com.h3xstream.findsecbugs</groupId>
+							<artifactId>findsecbugs-plugin</artifactId>
+							<version>${findsecbugs.version}</version>
+						</plugin>
+					</plugins>
+				</configuration>
+				<executions>
+					<execution>
+						<id>spotbugs-check</id>
+						<phase>verify</phase>
+						<goals><goal>check</goal></goals>
+					</execution>
+				</executions>
+			</plugin>
 		</plugins>
 	</build>
 
-	<repositories>
-		<repository>
-			<id>spring-snapshots</id>
-			<name>Spring Snapshots</name>
-			<url>https://repo.spring.io/snapshot</url>
-			<releases>
-				<enabled>false</enabled>
-			</releases>
-		</repository>
-	</repositories>
+	<profiles>
+		<!--
+		  OWASP dependency-check, in a profile rather than the default build (7.4).
 
-	<pluginRepositories>
-		<pluginRepository>
-			<id>spring-snapshots</id>
-			<name>Spring Snapshots</name>
-			<url>https://repo.spring.io/snapshot</url>
-			<releases>
-				<enabled>false</enabled>
-			</releases>
-		</pluginRepository>
-	</pluginRepositories>
+		  It is not in <build> because it downloads and updates a local copy of the NVD
+		  feed. On a cold cache that is minutes, and since late 2023 it needs an NVD API
+		  key to run at a usable rate. Putting that on every `mvn verify` makes the build
+		  slow enough that people stop running it, which costs you more than the scan
+		  gains.
+
+		  So: `mvn verify -Psecurity-scan` locally, and nightly in CI
+		  (.github/workflows/security.yml), not on every pull request.
+
+		  failBuildOnCVSS=7 means High and Critical break the build. Known findings live
+		  in owasp-suppressions.xml WITH AN EXPIRY DATE - an unsuppressed date-less
+		  suppression is just a permanent exception with extra steps.
+		-->
+		<profile>
+			<id>security-scan</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.owasp</groupId>
+						<artifactId>dependency-check-maven</artifactId>
+						<version>${dependency-check.version}</version>
+						<configuration>
+							<failBuildOnCVSS>7</failBuildOnCVSS>
+							<suppressionFiles>
+								<suppressionFile>owasp-suppressions.xml</suppressionFile>
+							</suppressionFiles>
+							<formats>
+								<format>HTML</format>
+								<format>SARIF</format>
+							</formats>
+							<nvdApiKey>${env.NVD_API_KEY}</nvdApiKey>
+						</configuration>
+						<executions>
+							<execution>
+								<phase>verify</phase>
+								<goals><goal>check</goal></goals>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
+
+	<!--
+	  7.4: the spring-snapshots repository and its plugin equivalent are gone. They existed
+	  only to resolve the SNAPSHOT parent. Leaving them behind would mean any dependency that
+	  ever failed to resolve from Maven Central would silently be looked for in a snapshot
+	  repo - which is a supply chain question, not a convenience one.
+	-->
 
 </project>

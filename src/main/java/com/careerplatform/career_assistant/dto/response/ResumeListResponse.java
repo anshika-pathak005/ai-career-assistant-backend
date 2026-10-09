@@ -5,7 +5,7 @@ import lombok.Data;
 
 import java.time.LocalDateTime;
 
-// used in GET /api/resume/my-resumes
+// used in GET /api/v1/resume/my-resumes
 @Data
 @AllArgsConstructor
 public class ResumeListResponse {

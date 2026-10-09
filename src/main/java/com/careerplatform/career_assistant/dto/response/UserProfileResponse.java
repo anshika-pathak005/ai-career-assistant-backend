@@ -32,6 +32,16 @@ public class UserProfileResponse {
     private RoadmapSummaryDto activeRoadmap;    // null if no roadmap yet
     private ResumeSummaryDto latestResume;       // null if no resume yet
 
+    /*
+     * 7.1: when this account is due to be deleted, or null when no deletion is pending.
+     *
+     * Additive, so existing clients are unaffected. It is here rather than only in the
+     * response to the delete call because the grace period is worthless if the user
+     * cannot see that a deletion is pending on a later visit - that visit is the only
+     * notification this app currently has.
+     */
+    private LocalDateTime deletionScheduledFor;
+
     @Data
     @AllArgsConstructor
     @NoArgsConstructor

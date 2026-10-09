@@ -4,7 +4,7 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-// included in roadmap generation response + GET /api/user/usage
+// included in roadmap generation response + GET /api/v1/user/usage
 // frontend uses this to show "2/3 roadmaps used this month"
 @Data
 @AllArgsConstructor

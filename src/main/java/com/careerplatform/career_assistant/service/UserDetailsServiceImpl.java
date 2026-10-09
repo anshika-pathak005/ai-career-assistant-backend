@@ -2,44 +2,54 @@ package com.careerplatform.career_assistant.service;
 
 import com.careerplatform.career_assistant.entity.User;
 import com.careerplatform.career_assistant.repository.UserRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.careerplatform.career_assistant.security.AuthenticatedUser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 // Spring Security requires this to load user from DB during authentication
-// UserDetailsService is a Spring Security interface — we implement it here
+// The "username" here is the userId, since that is what the JWT subject holds
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class UserDetailsServiceImpl implements UserDetailsService {
 
     private final UserRepository userRepository;
-    private final ObjectMapper objectMapper;
 
-    // Spring Security calls this with the userId (we use userId as "username")
-    // Returns UserDetails — Spring Security's representation of a user
-    @Override
-    public UserDetails loadUserByUsername(String userId) throws UsernameNotFoundException {
-        log.info("Loading user by userId: {}", userId);
+    /**
+     * Loads a user as an AuthenticatedUser, carrying their tokenVersion and role.
+     * Called by JwtAuthenticationFilter on every authenticated request, which is why
+     * the revocation check costs nothing extra — this row is loaded either way.
+     */
+    @Transactional(readOnly = true)
+    public AuthenticatedUser loadAuthenticatedUser(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new UsernameNotFoundException("User not found: " + userId));
 
-        User user = userRepository.findById(Long.parseLong(userId))
-                .orElseThrow(() -> {
-                    log.error("User not found with userId: {}", userId);
-                    return new UsernameNotFoundException("User not found with userId: " + userId);
-                });
-
-        // Spring Security's User builder — wraps our User entity into UserDetails
-        // authorities left empty for now — will add roles later (ROLE_USER, ROLE_ADMIN)
-        return org.springframework.security.core.userdetails.User
-                .withUsername(String.valueOf(user.getId()))
-                .password(user.getPasswordHash())
-                .authorities(java.util.Collections.emptyList())
-                .build();
+        return new AuthenticatedUser(
+                user.getId(),
+                user.getPasswordHash(),
+                user.getTokenVersion() != null ? user.getTokenVersion() : 0,
+                user.getRole()
+        );
     }
 
-
+    /**
+     * Spring Security's contract method, required by the DaoAuthenticationProvider bean.
+     * Delegates to loadAuthenticatedUser after parsing the userId.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public AuthenticatedUser loadUserByUsername(String userId) throws UsernameNotFoundException {
+        try {
+            return loadAuthenticatedUser(Long.parseLong(userId));
+        } catch (NumberFormatException ex) {
+            // The principal is always a numeric userId, so anything else is a caller
+            // bug — surface it as a 401, not a 500.
+            throw new UsernameNotFoundException("Invalid user identifier: " + userId);
+        }
+    }
 }

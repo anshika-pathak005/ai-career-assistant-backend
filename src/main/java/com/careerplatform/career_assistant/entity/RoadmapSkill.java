@@ -3,11 +3,15 @@ package com.careerplatform.career_assistant.entity;
 import com.careerplatform.career_assistant.enums.SkillLevel;
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.BatchSize;
 import java.util.List;
 
 // one skill inside a phase
 // e.g. React.js, Node.js, MongoDB
-@Data
+// @Data removed (5.1) — identity equals/hashCode and no relations in toString().
+@Getter
+@Setter
+@ToString
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
@@ -46,6 +50,10 @@ public class RoadmapSkill {
     // steps to learn this skill
     @OneToMany(mappedBy = "skill", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("stepOrder ASC")
+    // Deepest level and the widest fan-out: 5 phases x 4 skills = 20 collections.
+    // Batching turns 20 queries into 1.
+    @BatchSize(size = 25)
+    @ToString.Exclude
     private List<SkillStep> steps;
 
     // SKILL = learning skill, TOOL = tool/technology, PROJECT = project idea
