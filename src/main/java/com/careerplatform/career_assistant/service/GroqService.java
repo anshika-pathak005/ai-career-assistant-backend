@@ -40,7 +40,7 @@ import java.util.Map;
 public class GroqService {
 
     /** Roadmap generation asks for a large completion; specializations is a small one. */
-    private static final int ROADMAP_MAX_TOKENS = 7000;
+    private static final int ROADMAP_MAX_TOKENS = 8500;
     private static final int SPECIALIZATION_MAX_TOKENS = 800;
 
     /** Low temperature: these are structured outputs, not creative writing. */

@@ -47,3 +47,5 @@ uploads/
 # markdown files
 **/*.md
 !README.md
+
+render.yaml
