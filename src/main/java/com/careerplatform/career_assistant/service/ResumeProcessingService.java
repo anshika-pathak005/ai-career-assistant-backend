@@ -2,6 +2,7 @@ package com.careerplatform.career_assistant.service;
 
 import com.careerplatform.career_assistant.dto.response.*;
 import com.careerplatform.career_assistant.entity.*;
+import com.careerplatform.career_assistant.exception.IncompleteProfileException;
 import com.careerplatform.career_assistant.exception.ResourceNotFoundException;
 import com.careerplatform.career_assistant.repository.*;
 import com.careerplatform.career_assistant.service.GenerationLimitService.LimitType;
@@ -16,6 +17,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayInputStream;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -24,7 +26,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class ResumeProcessingService {
 
-    private final FileStorageService fileStorageService;
+    private final SupabaseStorageService supabaseStorageService;
     private final TextExtractionService textExtractionService;
     private final ResumeGroqService resumeGroqService;
     private final ResumeRepository resumeRepository;
@@ -36,7 +38,7 @@ public class ResumeProcessingService {
 
     /**
      * Main resume processing pipeline.
-     * Checks limit → saves file → extracts text → calls AI → saves analysis → returns response.
+     * Checks limit → saves file to Supabase → extracts text → calls AI → saves analysis → returns response.
      */
     /**
      * NOT @Transactional — deliberately.
@@ -59,28 +61,39 @@ public class ResumeProcessingService {
     public ResumeAnalysisResponse uploadAndAnalyze(Long userId, MultipartFile file) {
 
         // ── TX 1: short, DB only ──────────────────────────────────────────────
-        // Consume quota up front so parallel uploads cannot all pass the check.
+        // Validate profile completeness, then consume quota up front.
         User user = transactionTemplate.execute(status -> {
-            // Quota first: consume() runs a bulk UPDATE with clearAutomatically, so any
-            // entity loaded before it would come back detached.
+            User existingUser = userRepository.findById(userId)
+                    .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+            if (!Boolean.TRUE.equals(existingUser.getIsProfileComplete())
+                    || existingUser.getDreamJob() == null
+                    || existingUser.getDreamJob().isBlank()) {
+                throw new IncompleteProfileException(
+                        "Please complete your profile setup (including your dream job) before uploading a resume for analysis.");
+            }
+
+            // Quota is consumed only after profile validation succeeds.
             generationLimitService.consume(userId, LimitType.RESUME);
 
-            return userRepository.findById(userId)
-                    .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+            return existingUser;
         });
 
         log.info("Resume processing started for userId: {}", userId);
 
-        // ── No transaction: file I/O and the slow AI call ─────────────────────
-        String filePath = null;
+        // ── No transaction: file upload to Supabase, extraction, and the slow AI call ──
+        String supabaseObjectPath = null;
         try {
-            filePath = fileStorageService.saveFile(file);
+            // Upload to Supabase Storage (includes validation: size, type, magic-bytes)
+            supabaseObjectPath = supabaseStorageService.uploadResume(userId, file);
 
-            String rawText = textExtractionService.extractText(filePath);
+            // Extract text directly from file bytes
+            byte[] fileBytes = file.getBytes();
+            String rawText = textExtractionService.extractText(fileBytes);
             String aiResponseJson = resumeGroqService.analyzeResume(rawText, user);
 
             // ── TX 2: short, DB only ──────────────────────────────────────────
-            final String savedPath = filePath;
+            final String savedPath = supabaseObjectPath;
             return transactionTemplate.execute(status -> {
                 User fresh = userRepository.findById(userId)
                         .orElseThrow(() -> new ResourceNotFoundException("User not found"));
@@ -104,14 +117,41 @@ public class ResumeProcessingService {
             // Refund the quota — the user should not be charged for a failed analysis.
             generationLimitService.release(userId, LimitType.RESUME);
 
-            // Remove the file we wrote. The Resume row is only inserted in TX 2, so a
-            // failure before that point would otherwise leave an unreferenced file on
-            // disk forever — Files.copy is not covered by any transaction.
-            if (filePath != null) {
-                fileStorageService.deleteFile(filePath);
+            // Remove the file from Supabase if we uploaded it.
+            // The Resume row is only inserted in TX 2, so a failure before that point would otherwise leave an orphaned file.
+            if (supabaseObjectPath != null) {
+                supabaseStorageService.deleteResume(supabaseObjectPath);
             }
             throw ex;
+        } catch (Exception ex) {
+            // Catch other exceptions (e.g., IOException from file.getBytes())
+            generationLimitService.release(userId, LimitType.RESUME);
+            if (supabaseObjectPath != null) {
+                supabaseStorageService.deleteResume(supabaseObjectPath);
+            }
+            throw new RuntimeException("Failed to process resume", ex);
         }
+    }
+
+    /**
+     * Download a resume file from Supabase Storage.
+     *
+     * @param userId   The user ID (for authorization)
+     * @param resumeId The resume ID
+     * @return The file bytes and metadata
+     */
+    public ResumeDownloadResponse downloadResume(Long userId, Long resumeId) {
+        // SECURITY: ownership enforced in the query, not by a follow-up check.
+        Resume resume = resumeRepository.findByIdAndUserId(resumeId, userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Resume not found"));
+
+        byte[] fileBytes = supabaseStorageService.downloadResume(resume.getFilePath());
+
+        return new ResumeDownloadResponse(
+                resume.getFileName(),
+                resume.getFileType(),
+                fileBytes
+        );
     }
 
     /**
@@ -157,7 +197,7 @@ public class ResumeProcessingService {
     }
 
     /**
-     * Deletes resume and its file from disk.
+     * Deletes resume and its file from Supabase Storage.
      */
     @Transactional
     public void deleteResume(Long userId, Long resumeId) {
@@ -166,16 +206,16 @@ public class ResumeProcessingService {
         Resume resume = resumeRepository.findByIdAndUserId(resumeId, userId)
                 .orElseThrow(() -> new ResourceNotFoundException("Resume not found"));
 
-        String filePath = resume.getFilePath();
+        String objectPath = resume.getFilePath();
         resumeRepository.delete(resume);
 
-        // Delete the file only AFTER the transaction commits. Doing it first meant
-        // a rollback left the row pointing at a file that no longer existed.
+        // Delete the file from Supabase only AFTER the transaction commits.
+        // Doing it first meant a rollback left the row pointing at a file that no longer existed.
         TransactionSynchronizationManager.registerSynchronization(
                 new TransactionSynchronization() {
                     @Override
                     public void afterCommit() {
-                        fileStorageService.deleteFile(filePath);
+                        supabaseStorageService.deleteResume(objectPath);
                     }
                 });
         log.info("Resume deleted: {}", resumeId);
@@ -328,5 +368,11 @@ public class ResumeProcessingService {
         } catch (Exception ex) {
             return new ResumeAnalysisResponse.SectionAnalysisDto();
         }
+    }
+
+    /**
+     * DTO for resume download response.
+     */
+    public record ResumeDownloadResponse(String fileName, String contentType, byte[] content) {
     }
 }

@@ -8,10 +8,15 @@ import com.careerplatform.career_assistant.security.CurrentUserId;
 import com.careerplatform.career_assistant.service.ResumeProcessingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 @Slf4j
@@ -69,8 +74,37 @@ public class ResumeController {
     }
 
     /**
+     * GET /api/v1/resume/{id}/download
+     * Downloads the resume file from Supabase Storage.
+     * Ownership is enforced in the query, file served with appropriate headers.
+     */
+    @GetMapping("/{id}/download")
+    public ResponseEntity<byte[]> downloadResume(
+            @CurrentUserId Long userId,
+            @PathVariable Long id) {
+        log.info("Resume download request for id: {} by userId: {}", id, userId);
+
+        ResumeProcessingService.ResumeDownloadResponse downloadResponse =
+                resumeProcessingService.downloadResume(userId, id);
+
+        // Set content disposition for download
+        ContentDisposition contentDisposition = ContentDisposition.builder("attachment")
+                .filename(downloadResponse.fileName(), StandardCharsets.UTF_8)
+                .build();
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentDisposition(contentDisposition);
+        headers.setContentType(MediaType.parseMediaType(downloadResponse.contentType()));
+        headers.setContentLength(downloadResponse.content().length);
+
+        return ResponseEntity.ok()
+                .headers(headers)
+                .body(downloadResponse.content());
+    }
+
+    /**
      * DELETE /api/v1/resume/{id}
-     * Deletes the row and the file on disk. Ownership is enforced in the query.
+     * Deletes the row and the file from Supabase Storage. Ownership is enforced in the query.
      */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteResume(

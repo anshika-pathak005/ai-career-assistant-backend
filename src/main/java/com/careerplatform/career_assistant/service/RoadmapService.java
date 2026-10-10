@@ -6,6 +6,7 @@ import com.careerplatform.career_assistant.dto.response.RoadmapResponse;
 import com.careerplatform.career_assistant.dto.response.SpecializationResponse;
 import com.careerplatform.career_assistant.entity.*;
 import com.careerplatform.career_assistant.enums.*;
+import com.careerplatform.career_assistant.exception.IncompleteProfileException;
 import com.careerplatform.career_assistant.exception.ResourceNotFoundException;
 import com.careerplatform.career_assistant.repository.*;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -65,10 +66,20 @@ public class RoadmapService {
         log.info("Roadmap generation started for userId: {}", userId);
 
         // ── TX 1: short, DB only ──────────────────────────────────────────────
-        // Save form data, consume quota, archive the previous roadmap.
-        // Quota is consumed here rather than after the AI call so that parallel
-        // requests cannot all slip past the limit check.
+        // Validate profile completeness, save form data, consume quota, archive the previous roadmap.
+        // Pre-validation runs before quota is consumed so incomplete accounts are rejected
+        // without deducting from their monthly allowance.
         User user = transactionTemplate.execute(status -> {
+            User existingUser = userRepository.findById(userId)
+                    .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+            if (!Boolean.TRUE.equals(existingUser.getIsProfileComplete())
+                    || existingUser.getDreamJob() == null
+                    || existingUser.getDreamJob().isBlank()) {
+                throw new IncompleteProfileException(
+                        "Please complete your profile setup (including your dream job) before generating a career roadmap.");
+            }
+
             // Quota first, for two reasons. consume() runs a bulk UPDATE with
             // clearAutomatically, which detaches everything already in the persistence
             // context; and there is no point writing form data for a request that is

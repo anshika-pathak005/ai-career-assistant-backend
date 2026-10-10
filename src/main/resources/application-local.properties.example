@@ -52,3 +52,16 @@ app.account.deletion-grace-period=2m
 # profile - the management endpoints are not behind the security filter chain.
 management.server.port=8080
 management.endpoint.health.show-details=always
+
+
+# ===============================
+# SUPABASE STORAGE
+# ===============================
+# Supabase Storage configuration for resume file storage.
+# URL: https://fkthyogkozhpwqoygqth.supabase.co
+# Bucket: careerPilot_resumes (private)
+# Set SUPABASE_SECRET_KEY in your local environment.
+
+supabase.url=https://fkthyogkozhpwqoygqth.supabase.co
+supabase.bucket=careerPilot_resumes
+supabase.secret-key=${SUPABASE_SECRET_KEY}

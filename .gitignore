@@ -43,3 +43,7 @@ Thumbs.db
 
 # Uploaded resumes — never commit user files (contains PII)
 uploads/
+
+# markdown files
+**/*.md
+!README.md

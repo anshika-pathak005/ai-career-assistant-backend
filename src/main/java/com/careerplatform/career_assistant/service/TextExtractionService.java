@@ -8,6 +8,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.tika.Tika;
 import org.springframework.stereotype.Service;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.time.Duration;
 import java.nio.file.Files;
@@ -93,6 +95,32 @@ public class TextExtractionService {
         }
     }
 
+    /**
+     * Extracts text from an InputStream.
+     * Suitable for processing files from Supabase Storage or other stream sources.
+     */
+    public String extractText(InputStream inputStream) {
+        long startNanos = System.nanoTime();
+        String outcome = "success";
+        try {
+            return doExtract(inputStream);
+        } catch (RuntimeException ex) {
+            outcome = "failure";
+            throw ex;
+        } finally {
+            metrics.extractionCompleted(
+                    Duration.ofNanos(System.nanoTime() - startNanos), outcome);
+        }
+    }
+
+    /**
+     * Extracts text from a byte array.
+     * Suitable for processing files already downloaded from Supabase Storage.
+     */
+    public String extractText(byte[] bytes) {
+        return extractText(new ByteArrayInputStream(bytes));
+    }
+
     private String doExtract(String filePath) {
         Path path = Paths.get(filePath);
 
@@ -102,6 +130,19 @@ public class TextExtractionService {
             }
         });
 
+        return waitForExtraction(task);
+    }
+
+    private String doExtract(InputStream inputStream) {
+        Future<String> task = extractionPool.submit(() -> {
+            // Use a markable stream if we need to, but Tika can handle it
+            return tika.parseToString(inputStream, new org.apache.tika.metadata.Metadata(), MAX_CHARS);
+        });
+
+        return waitForExtraction(task);
+    }
+
+    private String waitForExtraction(Future<String> task) {
         String text;
         try {
             // The timeout bounds the wait, not the parser thread itself — a pathological
@@ -114,7 +155,6 @@ public class TextExtractionService {
             // 6.7: the path ends in the sanitised original filename, which is routinely
             // the user's real name. Logged at debug only; the warn line carries no PII.
             log.warn("Text extraction timed out after {}s", EXTRACTION_TIMEOUT_SECONDS);
-            log.debug("Timed out extracting: {}", filePath);
             throw new FileUploadException(
                     "This file took too long to read. It may be corrupted or too complex.");
 
@@ -129,6 +169,11 @@ public class TextExtractionService {
             throw new FileUploadException("Could not read this file. Please upload a valid PDF or DOCX.");
         }
 
+        validateExtractedText(text);
+        return text;
+    }
+
+    private void validateExtractedText(String text) {
         if (text == null || text.trim().isEmpty()) {
             throw new FileUploadException(
                     "No text could be extracted. The file may be empty or a scanned image.");
@@ -143,7 +188,6 @@ public class TextExtractionService {
         }
 
         log.info("Extracted {} characters from uploaded file", text.length());
-        return text;
     }
 
     @PreDestroy

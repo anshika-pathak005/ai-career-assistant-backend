@@ -39,7 +39,7 @@ public class UserSettingsService {
     private final ResumeRepository resumeRepository;
     private final AnalysisResultRepository analysisResultRepository;
     private final CareerRoadmapRepository roadmapRepository;
-    private final FileStorageService fileStorageService;
+    private final SupabaseStorageService supabaseStorageService;
     private final AppProperties appProperties;
     private final PlatformTransactionManager transactionManager;
 
@@ -243,23 +243,15 @@ public class UserSettingsService {
      *   4. refresh_tokens
      *   5. users
      *
-     * The second half of the old bug: even when rows went, the resume PDFs stayed on
-     * disk. A user exercising deletion left their CV, name, email and phone in the
-     * uploads folder. File paths are collected before the rows are deleted and the files
-     * are removed after commit — not during, because a rollback after unlinking cannot
-     * put the file back, and an unlink that throws must not roll back the deletion.
-     *
-     * 7.1: called once per due account from purgeDueAccounts, inside purgeTx so each
-     * account commits or rolls back on its own. @Transactional is kept for any future
-     * external caller, but it is the template that is doing the work here.
+     * Now also deletes resume files from Supabase Storage after commit.
      */
     @Transactional
     public void purgeAccount(Long userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found"));
 
-        // Read the paths while the rows still exist.
-        List<String> filePaths = resumeRepository.findFilePathsByUserId(userId);
+        // Read the Supabase object paths while the rows still exist.
+        List<String> supabaseObjectPaths = resumeRepository.findFilePathsByUserId(userId);
 
         int analyses = analysisResultRepository.deleteAllByUserId(userId);
         int resumes  = resumeRepository.deleteAllByUserId(userId);
@@ -273,7 +265,7 @@ public class UserSettingsService {
         log.info("Account purged for userId: {} — {} analyses, {} resumes, {} roadmaps",
                 userId, analyses, resumes, roadmaps.size());
 
-        deleteFilesAfterCommit(userId, filePaths);
+        deleteSupabaseFilesAfterCommit(userId, supabaseObjectPaths);
     }
 
     /** When a pending deletion will actually execute, or null if none is pending. */
@@ -282,30 +274,30 @@ public class UserSettingsService {
     }
 
     /**
-     * Unlinks the user's uploaded files once the transaction has actually committed.
+     * Unlinks the user's uploaded files from Supabase Storage once the transaction has actually committed.
      *
      * Each failure is swallowed and logged rather than rethrown: the account is already
      * gone at this point and an afterCommit exception cannot undo that, so the only
-     * useful outcome is a log line an operator can act on. A leftover file is a cleanup
+     * useful outcome is a log line an operator can act on. A leftover file in Supabase is a cleanup
      * task; a half-deleted account is a data integrity problem.
      */
-    private void deleteFilesAfterCommit(Long userId, List<String> filePaths) {
-        if (filePaths.isEmpty()) return;
+    private void deleteSupabaseFilesAfterCommit(Long userId, List<String> supabaseObjectPaths) {
+        if (supabaseObjectPaths.isEmpty()) return;
 
         TransactionSynchronizationManager.registerSynchronization(
                 new TransactionSynchronization() {
                     @Override
                     public void afterCommit() {
-                        for (String path : filePaths) {
+                        for (String objectPath : supabaseObjectPaths) {
                             try {
-                                fileStorageService.deleteFile(path);
+                                supabaseStorageService.deleteResume(objectPath);
                             } catch (RuntimeException ex) {
-                                log.error("Orphaned file after account deletion for userId {}: {}",
+                                log.error("Failed to delete Supabase file after account deletion for userId {}: {}",
                                         userId, ex.getMessage());
                             }
                         }
-                        log.info("Removed {} uploaded file(s) for deleted userId: {}",
-                                filePaths.size(), userId);
+                        log.info("Removed {} uploaded file(s) from Supabase for deleted userId: {}",
+                                supabaseObjectPaths.size(), userId);
                     }
                 });
     }

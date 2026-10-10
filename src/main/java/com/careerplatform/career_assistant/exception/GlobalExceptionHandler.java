@@ -237,6 +237,13 @@ public class GlobalExceptionHandler {
 
     // ── app-specific ──────────────────────────────────────────────────────────
 
+    /** 400 — user profile is incomplete. */
+    @ExceptionHandler(IncompleteProfileException.class)
+    public ResponseEntity<ErrorResponse> handleIncompleteProfile(IncompleteProfileException ex) {
+        log.warn("Incomplete profile: {}", ex.getMessage());
+        return status(HttpStatus.BAD_REQUEST, ex.getMessage());
+    }
+
     /** 400 — file upload validation failed. */
     @ExceptionHandler(FileUploadException.class)
     public ResponseEntity<ErrorResponse> handleFileUpload(FileUploadException ex) {
