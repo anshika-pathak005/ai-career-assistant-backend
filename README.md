@@ -114,7 +114,7 @@ src/main/java/com/careerplatform/career_assistant/
 
 3. **Run the application**
    ```bash
-   ./mvnw spring-boot:run
+   ./mvnw spring-boot:run 
    ```
 
    The API will be available at `http://localhost:8080` (default Spring Boot port, adjust as configured).

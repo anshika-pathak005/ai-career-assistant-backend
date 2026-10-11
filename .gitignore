@@ -49,3 +49,5 @@ uploads/
 !README.md
 
 render.yaml
+
+.env
